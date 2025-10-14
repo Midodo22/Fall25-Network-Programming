@@ -1,0 +1,7 @@
+2025/10/13 13:00:44 [INFO] Successfully connected to lobby server 140.113.17.13:52273
+2025/10/13 13:00:57 [INFO] Sent command: LOGIN mido 21
+2025/10/13 13:01:02 [INFO] Sent command: SHOW_STATUS 
+2025/10/13 13:01:13 [INFO] Sent command: JOIN_ROOM 613a03d6-f8b0-4e1e-96ae-02e268c41ea5
+2025/10/13 13:01:52 [ERROR] Failed to connect after 10 tries.
+2025/10/13 13:01:52 [INFO] Sent command: GAME_OVER 
+2025/10/13 14:27:45 [ERROR] Error when sending command: 
