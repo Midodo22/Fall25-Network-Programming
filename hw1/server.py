@@ -3,6 +3,7 @@ import logging
 import json
 import utils as ut
 import uuid
+import socket
 import game
 import config
 from config import server_data as server
@@ -112,6 +113,11 @@ async def handle_client(reader, writer):
                         await handle_show_status(writer)
                     else:
                         await ut.send_message(writer, ut.build_response("error", "Not logged in"))
+                elif command == "JOIN_ROOM":
+                    if username:
+                        await handle_join_room(params, username, writer)
+                    else:
+                        await ut.send_message(writer, ut.build_response("error", "Not logged in"))
 
                 else:
                     await ut.send_message(writer, ut.build_response("error", "Unknown command"))
@@ -144,6 +150,16 @@ async def handle_client(reader, writer):
                     }
                     await ut.broadcast(json.dumps(online_users_message) + '\n')
                     logging.info(f"User disconnected: {username}")
+                    
+                    async with server.rooms_lock:
+                        remove_room = []
+                        for room in server.rooms:
+                            if server.rooms[room]['creator'] == username:
+                                remove_room.append(room)
+                        for room in remove_room:
+                            logging.info(f"Removed room {room}")
+                            del server.rooms[room]
+                                
                 except Exception as e:
                     logging.error(f"Failed to broadcast updated online users list after disconnection: {e}")
         try:
@@ -246,36 +262,138 @@ async def handle_game_over(username):
 
     logging.info(f"User {username} has ended the game and is now idle.")
     
-
+        
 async def handle_decline_invite(params, username, writer):
     if len(params) != 2:
         await ut.send_message(writer, ut.build_response("error", "Invalid DECLINE_INVITE command"))
         return
-    inviter_username, room_id = params
-    # Notify inviter that invite was declined
-    async with server.online_users_lock:
-        if inviter_username in server.online_users:
-            inviter_info = server.online_users[inviter_username]
-            inviter_writer = inviter_info["writer"]
-            decline_message = {
-                "status": "invite_declined",
-                "from": username,
-                "room_id": room_id
-            }
-            await ut.send_message(inviter_writer, json.dumps(decline_message) + '\n')
-            logging.info(f"User {username} declined invitation from {inviter_username} to room: {room_id}")
-    await ut.send_message(writer, ut.build_response("success", f"DECLINE_INVITE_SUCCESS {room_id}"))
+    
+    room_id, udp_port = params
+    inviter_username = username
+    
+    # send UDP invite
+    decline_message = {
+        "status": "invite_declined",
+        "from": username,
+        "room_id": room_id
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: asyncio.DatagramProtocol(),
+            remote_addr=(config.HOST, udp_port)
+        )
+        transport.sendto(json.dumps(decline_message).encode())
+        transport.close()
+        
+        logging.info(f"User {username} declined invitation from {inviter_username} to room: {room_id}")
+        await ut.send_message(writer, ut.build_response("success", f"DECLINE_INVITE_SUCCESS {room_id}"))
+
+    except Exception as e:
+        logging.error(f"[UDP] Failed decline invite from to user on port {udp_port}: {e}")
+        await ut.send_message(writer, ut.build_response("error", "Failed to send UDP invite"))
+            
     
 async def handle_accept_invite(params, username, writer):
-    if len(params) != 1:
+    if len(params) != 2:
         await ut.send_message(writer, ut.build_response("error", "Invalid ACCEPT_INVITE command"))
         return
-    room_id = params[0]
+    
+    room_id, udp_port = params
+    
+    # Send accept message via udp
+    try:
+        accept_message = {
+            "status": "invite_accepted",
+            "from": username,
+            "room_id": room_id
+        }
+
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: asyncio.DatagramProtocol(),
+            remote_addr=(config.HOST, udp_port)
+        )
+        transport.sendto(json.dumps(accept_message).encode())
+        transport.close()
+
+        logging.info(f"[UDP] User {username} accepted invitation to room: {room_id}")
+        await ut.send_message(writer, ut.build_response("success", f"ACCEPT_INVITE_SUCCESS {room_id}"))
+
+        # Notify server to join room
+        await ut.send_command(writer, "JOIN_ROOM", [room_id])
+        logging.info(f"[TCP] User {username} joined room {room_id} after UDP accept.")
+        
+    except Exception as e:
+        logging.error(f"[UDP] Failed to send accept invite from {username} on port {udp_port}: {e}")
+        await ut.send_message(writer, ut.build_response("error", "Failed to send UDP accept"))
+        
+    
+async def handle_invite_player(params, username, writer):
+    if len(params) != 2:
+        await ut.send_message(writer, ut.build_response("error", "Invalid INVITE_PLAYER command"))
+        return
+
+    target_port, room_id = params
+    
+    try:
+        udp_port = int(target_port)
+    except ValueError:
+        await ut.send_message(writer, ut.build_response("error", "Invalid UDP port"))
+        return
+
+    # check room
     async with server.rooms_lock:
         if room_id not in server.rooms:
             await ut.send_message(writer, ut.build_response("error", "Room does not exist"))
             return
         room = server.rooms[room_id]
+        if room['creator'] != username:
+            await ut.send_message(writer, ut.build_response("error", "Only room creator can invite players"))
+            return
+        if len(room['players']) >= 2:
+            await ut.send_message(writer, ut.build_response("error", "Room is full"))
+            return
+
+    # send UDP invite
+    invite_message = {
+        "status": "invite",
+        "from": username,
+        "room_id": room_id
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: asyncio.DatagramProtocol(),
+            remote_addr=(config.HOST, udp_port)
+        )
+        transport.sendto(json.dumps(invite_message).encode())
+        transport.close()
+
+        # await ut.send_message(writer, ut.build_response("success", f"INVITE_SENT {udp_port} {room_id}"))
+        logging.info(f"[UDP] User {username} invited user on port {udp_port} to join room {room_id}")
+
+    except Exception as e:
+        logging.error(f"[UDP] Failed to send invite to user on port {udp_port}: {e}")
+        # await ut.send_message(writer, ut.build_response("error", "Failed to send UDP invite"))
+        
+async def handle_join_room(params, username, writer):
+    if len(params) != 1:
+        await ut.send_message(writer, ut.build_response("error", "Invalid JOIN_ROOM command"))
+        return
+
+    room_id = params[0]
+
+    # Check if room is available
+    async with server.rooms_lock:
+        if room_id not in server.rooms:
+            await ut.send_message(writer, ut.build_response("error", "Room does not exist"))
+            return
+
+        room = server.rooms[room_id]
+
         if room['status'] == 'In Game':
             await ut.send_message(writer, ut.build_response("error", "Room is already in game"))
             return
@@ -285,28 +403,34 @@ async def handle_accept_invite(params, username, writer):
         if username in room['players']:
             await ut.send_message(writer, ut.build_response("error", "You are already in the room"))
             return
+
         room['players'].append(username)
 
     async with server.online_users_lock:
         if username in server.online_users:
             server.online_users[username]["status"] = "in_room"
+
     await ut.send_message(writer, ut.build_response("success", f"JOIN_ROOM_SUCCESS {room_id}"))
-    
+
     if len(room['players']) == 2:
+
         async with server.rooms_lock:
             room['status'] = 'In Game'
             creator = room["players"][0]
             joiner = username
-            
             async with server.online_users_lock:
                 for player in room['players']:
                     if player in server.online_users:
                         server.online_users[player]["status"] = "in_game"
 
+                # Retrieve creator and joiner info
                 creator_info = server.online_users[creator]
                 joiner_info = server.online_users[joiner]
+
+                # Generate random ports for each role within the specified range
                 creator_port = ut.get_port()
                 joiner_port = ut.get_port()
+
                 creator_message = {
                     "status": "p2p_info",
                     "role": "host",
@@ -323,10 +447,10 @@ async def handle_accept_invite(params, username, writer):
                 }
                 await ut.send_message(creator_info["writer"], json.dumps(creator_message) + '\n')
                 await ut.send_message(joiner_info["writer"], json.dumps(joiner_message) + '\n')
-            logging.info(f"Game server info sent to players in room: {room_id}")
+        logging.info(f"Game server info has been sent to players in room {room_id}")
 
     async with server.rooms_lock:
-        rooms_data = [
+        public_rooms_data = [
             {
                 "room_id": r_id,
                 "creator": room["creator"],
@@ -334,45 +458,15 @@ async def handle_accept_invite(params, username, writer):
             }
             for r_id, room in server.rooms.items()
         ]
-    rooms_message = {
+    public_rooms_message = {
         "status": "update",
-        "data": rooms_data
+        "type": "public_rooms",
+        "data": public_rooms_data
     }
-    await ut.broadcast(json.dumps(rooms_message) + '\n')
-    logging.info(f"User {username} accepted invite to join room: {room_id}")
-    
-async def handle_invite_player(params, username, writer):
-    if len(params) != 2:
-        await ut.send_message(writer, ut.build_response("error", "Invalid INVITE_PLAYER command"))
-        return
-    target_username, room_id = params
-    
-    # Check if room is available
-    async with server.rooms_lock:
-        if room_id not in server.rooms:
-            await ut.send_message(writer, ut.build_response("error", "Room does not exist"))
-            return
-        room = server.rooms[room_id]
-        if room['creator'] != username:
-            await ut.send_message(writer, ut.build_response("error", "Only room creator can invite players"))
-            return
-        if len(room['players']) >= 2:
-            await ut.send_message(writer, ut.build_response("error", "Room is full"))
-            return
-        
-    # Check user
-    async with server.online_users_lock:
-        if target_username not in server.online_users:
-            await ut.send_message(writer, ut.build_response("error", "Target user not online"))
-            return
-        target_info = server.online_users[target_username]
-        if target_info["status"] != "idle":
-            await ut.send_message(writer, ut.build_response("error", "Target user is not idle"))
-            return
-        # target_writer = target_info["writer"]
-    await ut.send_message(writer, ut.build_response("success", f"READY_TO_INVITE {target_username} {room_id}"))
-    logging.info(f"User {username} is ready to send UDP invite to {target_username}")
 
+    await ut.broadcast(json.dumps(public_rooms_message) + '\n')
+    logging.info(f"User {username} has joined room {room_id}")
+        
 async def main():  
     server_ = await asyncio.start_server(handle_client, config.HOST, config.PORT)
     addr = server_.sockets[0].getsockname()

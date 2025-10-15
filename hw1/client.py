@@ -2,6 +2,9 @@ import asyncio
 import json
 import sys
 import logging
+import random
+import server as sv
+
 import utils as ut
 import game
 import config
@@ -39,7 +42,7 @@ COMMANDS = [
     "login <Username> <Password> - Log in",
     "logout - Log out",
     "create - Create room",
-    "invite <Username> <Room ID> - Invite user to join room",
+    "invite <Port> <Room ID> - Invite user to join room",
     "exit - Leave client",
     "help - Displays list of available commands",
     "status - Displays current status",
@@ -54,6 +57,10 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
         try:
             data = await reader.readline()
             if not data:
+                async with server.rooms_lock:
+                    for room in server.rooms:
+                        if room['creator'] not in server.online_users:
+                            del server.rooms[room['room_id']]
                 print("\nServer has disconnected.")
                 logging.info("Server has disconnected.")
                 game_in_progress.value = False
@@ -86,15 +93,6 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                         print(f"\nSuccessfully joined room {room_id}.\n")
                     elif msg.startswith("INVITE_SENT"):
                         print(f"\nInvite has been sent.\n")
-                    elif msg.startswith("READY_TO_INVITE"):
-                        parts = msg.split()
-                        # server sends: READY_TO_INVITE <target_username> <room_id>
-                        if len(parts) >= 3:
-                            target_username = parts[1]
-                            room_id = parts[2]
-                            print(f"\n[INFO] You can now invite {target_username} via UDP for room {room_id}.")
-                            # pass writer so UDP listener on other side can respond with TCP ACCEPT/DECLINE
-                            await send_udp_invite(target_username, room_id, writer)
 
                 elif status == "error":
                     print(f"\nError: {msg}\n")
@@ -196,11 +194,6 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 # make sure program exits
                 asyncio.get_event_loop().stop()
                 break
-                # await ut.send_command(writer, "LOGOUT", [])
-                # game_in_progress.value = False
-                # writer.close()
-                # await writer.wait_closed()
-                # break
             
             elif command == "HELP":
                 print("\nAvailable commands:")
@@ -232,7 +225,7 @@ async def handle_user_input(writer, game_in_progress, logged_in):
 
             elif command == "INVITE_PLAYER":
                 if len(params) != 2:
-                    print("Usage: invite <username> <Room ID>")
+                    print("Usage: invite <Port> <Room ID>")
                     continue
                 await ut.send_command(writer, "INVITE_PLAYER", params)
 
@@ -240,14 +233,13 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 await ut.send_command(writer, "SHOW_STATUS", [])
                 
             elif command == "SCAN":
-                players = await udp_discover_players()
-                if players:
-                    target_ip = players[0]  # example: pick first
-                    print(f"[UDP] Sending invite to {target_ip}")
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    await asyncio.get_event_loop().sock_sendto(b"INVITE", (target_ip, config.UDP_PORT))
-                else:
-                    print("No players found.")
+                await udp_discover_players()
+
+            elif command == "JOIN_ROOM":
+                if len(params) != 1:
+                    print("Usage: join <Room ID>")
+                    continue
+                await ut.send_command(writer, "JOIN_ROOM", params)
 
             else:
                 print("Invalid command, input 'help' to see list of available commands.")
@@ -274,7 +266,7 @@ For game
 async def initiate_game(game_in_progress, writer, room_id):
     try:
         if peer_info.get("role") == "host":
-                await start_game_as_host(peer_info.get("own_port"), room_id)
+            await start_game_as_host(peer_info.get("own_port"), room_id)
         elif peer_info.get("role") == "client":
             await start_game_as_client(peer_info.get("peer_ip"), peer_info.get("peer_port"), room_id)
 
@@ -284,7 +276,7 @@ async def initiate_game(game_in_progress, writer, room_id):
 
 
 async def start_game_as_host(own_port, room_id):
-    server = await asyncio.start_server(handle_game_client, '0.0.0.0', own_port, room_id)
+    server = await asyncio.start_server(handle_game_client, config.HOST, own_port, room_id)
     logging.info(f"Waiting for client to connect to {own_port} as game server...")
     print(f"Waiting for client to connect to {own_port} as game server...")
     
@@ -458,85 +450,86 @@ def display_public_rooms(public_rooms):
 """
 For UDP Invite
 """
-async def udp_listener():
-    loop = asyncio.get_event_loop()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('0.0.0.0', config.UDP_PORT))
-    sock.setblocking(False)
-    print(f"[UDP] Listening on port {config.UDP_PORT} for invites...")
+async def handle_invite(message, udp_sock, tcp_writer, addr):
+    inviter = message["from"]
+    room_id = message["room_id"]
+    print(f"\n[INVITE] You were invited by {inviter} to join room {room_id}")
+
+    # Prompt user for input asynchronously
+    while True:
+        response = input(f"Would you like to accept the invite? Type \"yes\" or \"no\".").strip()
+
+        udp_port = udp_sock.getsockname()[1]
+        if response.lower() == "yes":
+            print("Accepted invite.")
+            await sv.handle_accept_invite([room_id, udp_port], inviter, tcp_writer)
+            break
+        elif response.lower() == "no":
+            print("Declined invite.")
+            await sv.handle_decline_invite([room_id, udp_port], inviter, tcp_writer)
+            break
+        else:
+            print("Invalid input. Please type \"yes\" or \"no\".")
+    
+    return
+
+async def udp_listener(udp_sock, tcp_writer):
+    """
+    Background task to listen for UDP invites and prompt user to accept/decline.
+    """
+    loop = asyncio.get_running_loop()
 
     while True:
-        data, addr = await loop.sock_recvfrom(sock, 1024)
-        msg = data.decode().strip()
-        if msg.startswith("INVITE"):
-            sender_ip = addr[0]
-            print(f"[UDP] Received invitation from {sender_ip}")
-            response = input("Accept invite? (yes/no): ").strip().lower()
-            if response == "yes":
-                await loop.sock_sendto(b"ACCEPT", addr)
+        try:
+            data, addr = await loop.sock_recvfrom(udp_sock, 1024)
+            msg = data.decode()
+            try:
+                message = json.loads(msg)
+            except json.JSONDecodeError:
+                print(f"[UDP] Received malformed message from {addr}: {msg}")
+                continue
+
+            # Handle invite
+            if message.get("status") == "invite":
+                await handle_invite(message, udp_sock, tcp_writer, addr)
+            elif message.get("status") == "invite_declined":
+                print(f"[UDP] User from {addr} has declined your invite")
+            elif message.get("status") == "invite_accepted":
+                print(f"[UDP] User from {addr} has accepted your invite")
             else:
-                await loop.sock_sendto(b"DECLINE", addr)
+                print(f"[UDP] Received unknown message from {addr}: {message}")
+
+        except Exception as e:
+            print(f"[UDP] Error receiving message: {e}")
+            await asyncio.sleep(0.1)
 
 
 async def udp_discover_players():
-    loop = asyncio.get_event_loop()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-
-    print("[UDP] Scanning for available players...")
-    await loop.sock_sendto(b"DISCOVER", ('255.255.255.255', config.UDP_PORT))
+    print("Scanning for available players...")
 
     found = []
-    try:
-        while True:
-            data, addr = await asyncio.wait_for(loop.sock_recvfrom(sock, 1024), timeout=3)
-            msg = data.decode().strip()
-            if msg.startswith("AVAILABLE"):
-                found.append(addr[0])
-                print(f"Found player at {addr[0]}")
-    except asyncio.TimeoutError:
-        pass
+    for port in range(config.P2P_PORT_RANGE[0], config.P2P_PORT_RANGE[1] + 1):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.bind(('0.0.0.0', port))  # try to bind
+        except OSError:
+            found.append(port)
+        finally:
+            sock.close() 
 
-    print(f"[UDP] Discovery complete. Found: {found}")
-    return found
 
-async def send_udp_invite(target_username):
-    loop = asyncio.get_event_loop()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-
-    print(f"[UDP] Searching for {target_username}...")
-    await loop.sock_sendto(b"DISCOVER", ('255.255.255.255', config.UDP_PORT))
-
-    found_ip = None
-    try:
-        while True:
-            data, addr = await asyncio.wait_for(loop.sock_recvfrom(sock, 1024), timeout=3)
-            msg = data.decode().strip()
-            if msg.startswith("AVAILABLE"):
-                found_ip = addr[0]
-                print(f"[UDP] Found {target_username} at {found_ip}")
-                break
-    except asyncio.TimeoutError:
-        print("[UDP] Discovery timeout. No player found.")
-        return
-
-    if found_ip:
-        print(f"[UDP] Sending invitation to {found_ip}:{config.UDP_PORT}")
-        await loop.sock_sendto(b"INVITE", (found_ip, config.UDP_PORT))
-        print(f"[UDP] Invitation sent to {target_username}.")
+    if found:
+        print(f"Discovery complete. Found the following players: {found}")
+    else:
+        print("Not available players found :(")
+    return
 
 
 async def main():
-    server_ip = input(f"Input server IP（Default：{config.HOST}）：").strip()
-    server_ip = server_ip if server_ip else config.HOST
-    server_port_input = input(f"Input server port（Default：{config.PORT}）：").strip()
-    try:
-        server_port = int(server_port_input) if server_port_input else config.PORT
-    except ValueError:
-        print("Invalid port, using default port 15000.")
-        server_port = config.PORT
-
+    server_ip = config.HOST
+    server_port = config.PORT
+    
+    # TCP connection
     try:
         reader, writer = await asyncio.open_connection(server_ip, server_port)
         print("Successfully connected to lobby server.")
@@ -549,12 +542,31 @@ async def main():
         print(f"Unable to connect to server: {e}")
         logging.error(f"Unable to connect to server: {e}")
         return
+    
+    # UDP connection
+    udp_sock = None
+    for _ in range(10):
+        try:
+            udp_port = random.randint(*config.P2P_PORT_RANGE)
+            udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            udp_sock.bind(('0.0.0.0', udp_port))
+            udp_sock.setblocking(False)
+            print(f"[UDP] Listening on port {udp_port}")
+            break
+        except OSError as e:
+            print(f"Failed to bind UDP port {udp_port}: {e}")
+            logging.error(f"Client failed to bind UDP port {udp_port}: {e}")
+    else:
+        print("Failed to bind UDP socket in the specified range.")
+        return
 
     game_in_progress = type('', (), {'value': False})()
     logged_in = type('', (), {'value': False})()
 
     asyncio.create_task(handle_server_messages(reader, writer, game_in_progress, logged_in))
     asyncio.create_task(handle_user_input(writer, game_in_progress, logged_in))
+    asyncio.create_task(udp_listener(udp_sock, writer))
 
     print("\nAvailable commands: ")
     for cmd in COMMANDS:

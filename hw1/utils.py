@@ -110,9 +110,9 @@ async def handle_register(params, writer):
         await send_message(writer, build_response("success", "REGISTRATION_SUCCESS"))
         logging.info(f"User {username} registered successfully.")
     
-    with open('userdata.json', 'w') as f:
-        json.dump(server.users, f)
-    logging.info(f"Updated userdata.json successfully.")
+        with open('userdata.json', 'w') as f:
+            json.dump(server.users, f)
+        logging.info(f"Updated userdata.json successfully.")
 
 
 async def handle_login(params, reader, writer):
@@ -142,7 +142,7 @@ async def handle_login(params, reader, writer):
                             "writer": writer,
                             "status": "idle",
                             "ip": client_ip,
-                            "port": client_port
+                            "port": client_port  # TCP port
                         }
                 await send_message(writer, build_response("success", "LOGIN_SUCCESS"))
                 await send_lobby_info(writer)
@@ -189,6 +189,15 @@ async def handle_logout(username, writer):
             logging.info(f"User {username} logged out.")
         except Exception as e:
             logging.error(f"Failed to broadcast updated online users list after logout: {e}")
+        
+        async with server.rooms_lock:
+            remove_room = []
+            for room in server.rooms:
+                if server.rooms[room]['creator'] == username:
+                    remove_room.append(room)
+            for room in remove_room:
+                logging.info(f"Removed room {room}")
+                del server.rooms[room]
     else:
         await send_message(writer, build_response("error", "User not logged in."))
 
@@ -197,7 +206,10 @@ async def handle_logout(username, writer):
 Manage logger
 """
 def init_logging():
-    logging.basicConfig(level=logging.INFO, filename="logger.log", filemode="w", 
+    with open('logger.log', 'w'):
+        pass
+
+    logging.basicConfig(level=logging.INFO, filename="logger.log", filemode="a", 
                     format='%(asctime)s [%(levelname)s] %(message)s',
                     datefmt='%Y/%m/%d %H:%M:%S')
 
