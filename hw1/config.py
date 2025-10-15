@@ -10,6 +10,9 @@ UDP_PORT = 12000   # >10000
 UDP_BROADCAST_RANGE = range(12000, 12100)
 
 P2P_PORT_RANGE = (63042, 63142)
+available_ports = {}
+for i in range(63042, 63142 + 1):
+    available_ports[i] = 1
 
 
 class server:

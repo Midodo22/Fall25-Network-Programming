@@ -12,7 +12,7 @@ ut.init_logging()
 
     
 async def handle_create_room(username, writer):
-    room_id = str(uuid.uuid4())
+    room_id = ut.get_room_id()
     async with server.rooms_lock:
         server.rooms[room_id] = {
             'creator': username,
@@ -437,6 +437,7 @@ async def handle_join_room(params, username, writer):
                     "peer_ip": joiner_info["ip"],
                     "peer_port": joiner_port,
                     "own_port": creator_port,
+                    "room_id": room_id
                 }
                 joiner_message = {
                     "status": "p2p_info",
@@ -444,6 +445,7 @@ async def handle_join_room(params, username, writer):
                     "peer_ip": creator_info["ip"],
                     "peer_port": creator_port,
                     "own_port": joiner_port,
+                    "room_id": room_id
                 }
                 await ut.send_message(creator_info["writer"], json.dumps(creator_message) + '\n')
                 await ut.send_message(joiner_info["writer"], json.dumps(joiner_message) + '\n')

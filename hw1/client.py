@@ -3,8 +3,10 @@ import json
 import sys
 import logging
 import random
-import server as sv
+from functools import partial
+import traceback
 
+import server as sv
 import utils as ut
 import game
 import config
@@ -128,11 +130,18 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                     peer_info["peer_ip"] = message_json.get("peer_ip")
                     peer_info["peer_port"] = message_json.get("peer_port")
                     peer_info["own_port"] = message_json.get("own_port")
+                    peer_info["room_id"] = message_json.get("room_id")
+                    room_id = peer_info["room_id"]
                     
+                    # Initialize local board for this room
+                    if not hasattr(server, "rooms"):
+                        server.rooms = {}
+                    if room_id not in server.rooms:
+                        server.rooms[room_id] = {"board": game.board()}
+                        
                     logging.debug(f"Role: {peer_info['role']} waiting for peer: {peer_info['peer_ip']} waiting for port: {peer_info['peer_port']}, self port: {peer_info['own_port']}")
                     print(f"Role: {peer_info['role']} waiting for peer: {peer_info['peer_ip']} waiting for port: {peer_info['peer_port']}, self port: {peer_info['own_port']}")
                     
-                    room_id = message_json.get("room_id")
                     asyncio.create_task(initiate_game(game_in_progress, writer, room_id))
                     game_in_progress.value = True
                 elif status == "status":
@@ -264,6 +273,8 @@ async def handle_user_input(writer, game_in_progress, logged_in):
 For game
 """
 async def initiate_game(game_in_progress, writer, room_id):
+    logging.info(f"Initiating game for room {room_id}...")
+    game_in_progress.value = True
     try:
         if peer_info.get("role") == "host":
             await start_game_as_host(peer_info.get("own_port"), room_id)
@@ -276,7 +287,13 @@ async def initiate_game(game_in_progress, writer, room_id):
 
 
 async def start_game_as_host(own_port, room_id):
-    server = await asyncio.start_server(handle_game_client, config.HOST, own_port, room_id)
+
+    server = await asyncio.start_server(
+        partial(handle_game_client, room_id=room_id),
+        config.HOST, own_port
+    )
+
+    # server = await asyncio.start_server(handle_game_client, config.HOST, own_port, room_id)
     logging.info(f"Waiting for client to connect to {own_port} as game server...")
     print(f"Waiting for client to connect to {own_port} as game server...")
     
@@ -339,53 +356,184 @@ async def game_loop(reader, writer, role, room_id):
     my_move = None
     opponent_move = None
     game_over = False
+    extra_turn = True
+    print("\nWelcome to Mancala!\nType \"exit\" to end game at any time.")
 
+    """
     while not game_over:
-        if role == "Host":
-            # Host move
-            my_move = await get_move("Host", server, room_id)
-            await ut.send_message(writer, {"move": my_move})
-            print("Waiting for opponent to choose pocket...")
-            data = await reader.read(1024)
-            if not data:
-                print("Opponent has disconnected.")
-                game_over = True
-                break
-            try:
-                message = json.loads(data.decode())
-                opponent_move = message.get("move")
-                if not check_move(opponent_move):
-                    print("Received invalid move.")
-                    continue
-            except json.JSONDecodeError:
-                print("Received invalid message.")
-                continue
-        else:
-            # Client move
-            print("Waiting for opponent to choose pocket...")
-            data = await reader.read(1024)
-            if not data:
-                print("Opponent has disconnected.")
-                game_over = True
-                break
-            try:
-                message = json.loads(data.decode())
-                opponent_move = message.get("move")
-                if not check_move(opponent_move):
-                    print("Received invalid move.")
-                    continue
-            except json.JSONDecodeError:
-                print("Received invalid message.")
-                continue
-            my_move = await get_move("Client")
-            await ut.send_message(writer, {"move": my_move})
+        try:
+            if role == "Host":
+                while extra_turn:
+                    # Host move
+                    while True:
+                        game.print_board(room_id)
+                        my_move = await get_user_input(f"Host, which pocket do you want to move?\n")
+                        if isinstance(my_move, str) and my_move.lower() == "exit":
+                            print("Exiting game...")
+                            game_over = True
+                            server_close_event.set()
+                            break
+                        elif await check_move(my_move, room_id):
+                            my_move = int(my_move)
+                            break
+                        print("Invalid move. Please try again.")
 
-        if game.det_game_over(room_id):
+                    if game_over:
+                        break
+                    
+                    extra_turn = game.update_board("Host", my_move, room_id)
+                    board_state = server.rooms[room_id]['board'].serialize()
+                    await ut.send_message(writer, {"move": my_move, "board": board_state})
+
+                    print("Waiting for opponent to choose pocket...")
+                    data = await reader.readline()
+                    if not data:
+                        print("Opponent has disconnected.")
+                        game_over = True
+                        break
+                    try:
+                        message = json.loads(data.decode())
+                        opponent_move = message.get("move")
+                        board_state = message.get("board")
+                        server.rooms[room_id]['board'] = board_state.deserialize(board_state)
+                        print(f"Client chose: {opponent_move}")
+                    except json.JSONDecodeError:
+                        print("Received invalid message.")
+                        continue
+            else:
+                # Client move
+                while extra_turn:
+                    print("Waiting for opponent to choose pocket...")
+                    data = await reader.readline()
+                    if not data:
+                        print("Opponent has disconnected.")
+                        game_over = True
+                        break
+                    
+                    try:
+                        message = json.loads(data.decode())
+                        opponent_move = message.get("move")
+                        board_state = message.get("board")
+                        server.rooms[room_id]['board'] = board_state.deserialize(board_state)
+                    except json.JSONDecodeError:
+                        print("Received invalid message.")
+                        continue
+                    print(f"Opponent chose: {opponent_move}")
+                    
+                    while True:
+                        game.print_board(room_id)
+                        my_move = await get_user_input(f"Client, which pocket do you want to move?\n")
+                        if isinstance(my_move, str) and my_move.lower() == "exit":
+                            game_over = True
+                            server_close_event.set()
+                            break
+                        elif await check_move(my_move, room_id):
+                            break
+                        print("Invalid move. Please try again.")
+
+                    if game_over:
+                        break
+                    
+                    extra_turn = game.update_board("Client", int(my_move), room_id)
+                    board_state = server.rooms[room_id]['board'].serialize()
+                    await ut.send_message(writer, {"move": my_move, "board": board_state})
+        """
+    while not game_over:
+        try:
+            if role == "Host":
+                while extra_turn:
+                    # Host move
+                    while True:
+                        game.print_board(room_id)
+                        my_move = await get_user_input(f"Host, which pocket do you want to move?\n")
+                        if isinstance(my_move, str) and my_move.lower() == "exit":
+                            print("Exiting game...")
+                            game_over = True
+                            server_close_event.set()
+                            break
+                        elif await check_move(my_move, room_id):
+                            my_move = int(my_move)
+                            break
+                        print("Invalid move. Please try again.")
+
+                    if game_over:
+                        break
+                    
+                    extra_turn = game.update_board("Host", my_move, room_id)
+                    await ut.send_message(writer, {"move": my_move})
+
+                    print("Waiting for opponent to choose pocket...")
+                    data = await reader.readline()
+                    if not data:
+                        print("Opponent has disconnected.")
+                        game_over = True
+                        break
+                    try:
+                        message = json.loads(data.decode())
+                        opponent_move = message.get("move")
+                        board_state = message.get("board")
+                        server.rooms[room_id]['board'] = board_state.deserialize(board_state)
+                        print(f"Client chose: {opponent_move}")
+                    except json.JSONDecodeError:
+                        print("Received invalid message.")
+                        continue
+            else:
+                # Client move
+                while extra_turn:
+                    print("Waiting for opponent to choose pocket...")
+                    data = await reader.readline()
+                    if not data:
+                        print("Opponent has disconnected.")
+                        game_over = True
+                        break
+                    
+                    try:
+                        message = json.loads(data.decode())
+                        opponent_move = message.get("move")
+                        board_state = message.get("board")
+                        server.rooms[room_id]['board'] = board_state.deserialize(board_state)
+                    except json.JSONDecodeError:
+                        print("Received invalid message.")
+                        continue
+                    print(f"Opponent chose: {opponent_move}")
+                    
+                    while True:
+                        game.print_board(room_id)
+                        my_move = await get_user_input(f"Client, which pocket do you want to move?\n")
+                        if isinstance(my_move, str) and my_move.lower() == "exit":
+                            game_over = True
+                            server_close_event.set()
+                            break
+                        elif await check_move(my_move, room_id):
+                            break
+                        print("Invalid move. Please try again.")
+
+                    if game_over:
+                        break
+                    
+                    extra_turn = game.update_board("Client", int(my_move), room_id)
+                    board_state = server.rooms[room_id]['board'].serialize()
+                    await ut.send_message(writer, {"move": my_move, "board": board_state})
+
+            if game.det_game_over(room_id):
+                game_over = True
+                server_close_event.set()
+                game.det_winner(room_id)
+                
+        except (json.JSONDecodeError, ConnectionError):
+            print("Connection error or invalid message. Ending game.")
             game_over = True
             server_close_event.set()
-            game.det_winner(my_move, opponent_move, role)
-        else:
-            game.update_board()
+            break
+
+        except Exception as e:
+            print(f"Unexpected error during game: {e}")
+            traceback.print_exc()
+            game_over = True
+            server_close_event.set()
+            break
+        
+    server_close_event.set()
 
 
 async def check_move(input, room_id):
@@ -397,26 +545,6 @@ async def check_move(input, room_id):
         return True
     except:
         return False
-
-
-async def get_move(player, room_id):
-    while True:
-        game.print_board(server, room_id)
-        input = await get_user_input(f"{player}, which pocket do you want to move?")
-        try:
-            move = int(input)
-            cur_board = server.rooms[room_id]['board']
-            if move > 6:
-                print("Index out of range, please choose another pocket.")
-                continue
-            elif cur_board.BP1[move - 1] == 0:
-                print('There are no stones in that pocket.\nChoose another pocket.\n')
-                continue
-            
-            game.update_board(player, server, room_id)
-            return move                
-        except ValueError:
-            print("That is not a valid move, please try again.")
 
 
 """
@@ -457,7 +585,7 @@ async def handle_invite(message, udp_sock, tcp_writer, addr):
 
     # Prompt user for input asynchronously
     while True:
-        response = input(f"Would you like to accept the invite? Type \"yes\" or \"no\".").strip()
+        response = input(f"Would you like to accept the invite? Type \"yes\" or \"no\".\n").strip()
 
         udp_port = udp_sock.getsockname()[1]
         if response.lower() == "yes":
@@ -545,9 +673,12 @@ async def main():
     
     # UDP connection
     udp_sock = None
+    while True:
+        udp_port = random.randint(*config.P2P_PORT_RANGE)
+        if config.available_ports[udp_port]:
+            break
     for _ in range(10):
         try:
-            udp_port = random.randint(*config.P2P_PORT_RANGE)
             udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             udp_sock.bind(('0.0.0.0', udp_port))

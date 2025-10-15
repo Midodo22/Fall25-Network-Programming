@@ -11,6 +11,8 @@ General utils
 """
 async def send_message(writer, message):
     try:
+        if isinstance(message, dict):
+            message = json.dumps(message)
         writer.write(message.encode())
         await writer.drain()
     except Exception as e:
@@ -84,9 +86,12 @@ async def send_lobby_info(writer):
         except Exception as e:
             logging.error(f"Failed to send lobby info: {e}")
 
-
 def get_port():
     return random.randint(config.P2P_PORT_RANGE[0], config.P2P_PORT_RANGE[1])
+
+def get_room_id():
+    id = ''.join(str(random.randint(0,9)) for x in range(6))
+    return id
 
 """
 Manage users and passwords
