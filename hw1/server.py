@@ -83,12 +83,6 @@ async def handle_client(reader, writer):
                     else:
                         await ut.send_message(writer, ut.build_response("error", "Not logged in"))
 
-                elif command == "JOIN_ROOM":
-                    if username:
-                        await handle_join_room(params, username, writer)
-                    else:
-                        await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
                 elif command == "INVITE_PLAYER":
                     if username:
                         await handle_invite_player(params, username, writer)
@@ -191,7 +185,7 @@ async def handle_show_status(writer):
         else:
             for user in users_data:
                 status_message += f"User: {user['username']} - Status: {user['status']}\n"
-        status_message += "----------------------------\n"
+        status_message += "----------------------------\nInput a command: "
         
         status_response = {
             "status": "status",
@@ -311,8 +305,8 @@ async def handle_accept_invite(params, username, writer):
 
                 creator_info = server.online_users[creator]
                 joiner_info = server.online_users[joiner]
-                creator_port = ut.get_random_p2p_port()
-                joiner_port = ut.get_random_p2p_port()
+                creator_port = ut.get_port()
+                joiner_port = ut.get_port()
                 creator_message = {
                     "status": "p2p_info",
                     "role": "host",
@@ -379,88 +373,6 @@ async def handle_invite_player(params, username, writer):
     await ut.send_message(writer, ut.build_response("success", f"READY_TO_INVITE {target_username} {room_id}"))
     logging.info(f"User {username} is ready to send UDP invite to {target_username}")
 
-async def handle_join_room(params, username, writer):
-    if len(params) != 1:
-        await ut.send_message(writer, ut.build_response("error", "Invalid JOIN_ROOM command"))
-        return
-    room_id = params[0]
-    
-    # Check if room is available
-    async with server.rooms_lock:
-        if room_id not in server.rooms:
-            await ut.send_message(writer, ut.build_response("error", "Room does not exist"))
-            return
-        room = server.rooms[room_id]
-        if room['status'] == 'In Game':
-            await ut.send_message(writer, ut.build_response("error", "Room is already in game"))
-            return
-        if len(room['players']) >= 2:
-            await ut.send_message(writer, ut.build_response("error", "Room is full"))
-            return
-        if username in room['players']:
-            await ut.send_message(writer, ut.build_response("error", "You are already in the room"))
-            return
-        room['players'].append(username)
-
-    async with server.online_users_lock:
-        if username in server.online_users:
-            server.online_users[username]["status"] = "in_room"
-    await ut.send_message(writer, ut.build_response("success", f"JOIN_ROOM_SUCCESS {room_id}"))
-    
-    if len(room['players']) == 2:
-        async with server.rooms_lock:
-            room['status'] = 'In Game'
-            
-            creator = room["players"][0]
-            joiner = username
-            async with server.online_users_lock:
-                for player in room['players']:
-                    if player in server.online_users:
-                        server.online_users[player]["status"] = "in_game"
-                
-                # Retrieve creator and joiner info
-                creator_info = server.online_users[creator]
-                joiner_info = server.online_users[joiner]
-
-                # Generate random ports for each role within the specified range
-                creator_port = ut.get_random_p2p_port()
-                joiner_port = ut.get_random_p2p_port()
-                
-                creator_message = {
-                    "status": "p2p_info",
-                    "role": "host",
-                    "peer_ip": joiner_info["ip"],
-                    "peer_port": joiner_port,
-                    "own_port": creator_port,
-                }
-                joiner_message = {
-                    "status": "p2p_info",
-                    "role": "client",
-                    "peer_ip": creator_info["ip"],
-                    "peer_port": creator_port,
-                    "own_port": joiner_port,
-                }
-                await ut.send_message(creator_info["writer"], json.dumps(creator_message) + '\n')
-                await ut.send_message(joiner_info["writer"], json.dumps(joiner_message) + '\n')
-        logging.info(f"Game server info has been sent to players in room {room_id}")
-
-    async with server.rooms_lock:
-        public_rooms_data = [
-            {
-                "room_id": r_id,
-                "creator": room["creator"],
-                "status": room["status"]
-            }
-            for r_id, room in server.rooms.items()
-        ]
-    public_rooms_message = {
-        "status": "update",
-        "type": "public_rooms",
-        "data": public_rooms_data
-    }
-    await ut.broadcast(json.dumps(public_rooms_message) + '\n')
-    logging.info(f"User {username} has joined room {room_id}")
-  
 async def main():  
     server_ = await asyncio.start_server(handle_client, config.HOST, config.PORT)
     addr = server_.sockets[0].getsockname()

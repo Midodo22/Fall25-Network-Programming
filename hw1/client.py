@@ -15,9 +15,6 @@ logging.basicConfig(
     level=logging.DEBUG
 )
 
-# placeholder
-# placeholder
-
 peer_info = {
     "role": None,
     "peer_ip": None,
@@ -30,7 +27,6 @@ COMMAND_ALIASES = {
     "LOGIN": ["LOGIN", "login"],
     "LOGOUT": ["LOGOUT", "logout"],
     "CREATE_ROOM": ["CREATE_ROOM", "create", "c"],
-    "JOIN_ROOM": ["JOIN_ROOM", "join", "j"],
     "INVITE_PLAYER": ["INVITE_PLAYER", "invite", "i"],
     "EXIT": ["EXIT", "exit", "quit", "q"],
     "HELP": ["HELP", "help", "h"],
@@ -43,7 +39,6 @@ COMMANDS = [
     "login <Username> <Password> - Log in",
     "logout - Log out",
     "create - Create room",
-    # "join <Room ID> - Join room",
     "invite <Username> <Room ID> - Invite user to join room",
     "exit - Leave client",
     "help - Displays list of available commands",
@@ -234,12 +229,6 @@ async def handle_user_input(writer, game_in_progress, logged_in):
 
             elif command == "CREATE_ROOM":
                 await ut.send_command(writer, "CREATE_ROOM", params)
-
-            elif command == "JOIN_ROOM":
-                if len(params) != 1:
-                    print("Usage: join <Room ID>")
-                    continue
-                await ut.send_command(writer, "JOIN_ROOM", params)
 
             elif command == "INVITE_PLAYER":
                 if len(params) != 2:
@@ -450,7 +439,7 @@ def display_online_users(online_users):
             name = user.get("username", "未知")
             status = user.get("status", "未知")
             print(f"User: {name} - Status: {status}")
-    print("----------------------------")
+    print("----------------------------\nInput a command: ")
 
 
 def display_public_rooms(public_rooms):
@@ -463,7 +452,7 @@ def display_public_rooms(public_rooms):
             creator = room.get("creator", "未知")
             room_status = room.get("status", "未知")
             print(f"Room ID: {room_id} | Creator: {creator} | Status: {room_status}")
-    print("----------------------------")
+    print("----------------------------\nInput a command: ")
 
 
 """

@@ -73,7 +73,7 @@ async def send_lobby_info(writer):
             else:
                 for user in users_data:
                     status_message += f"User: {user['username']} - Status: {user['status']}\n"
-            status_message += "----------------------------\n"
+            status_message += "----------------------------\nInput command: "
             
             status_response = {
                 "status": "status",
@@ -85,7 +85,7 @@ async def send_lobby_info(writer):
             logging.error(f"Failed to send lobby info: {e}")
 
 
-def get_random_p2p_port():
+def get_port():
     return random.randint(config.P2P_PORT_RANGE[0], config.P2P_PORT_RANGE[1])
 
 """
@@ -103,6 +103,7 @@ async def handle_register(params, writer):
     username, password = params
     if username in server.users:
         await send_message(writer, build_response("error", "Username exists, please choose a new one."))
+        return
     async with server.user_lock:
         hashed_pswd = hash(password)
         server.users[username] = hashed_pswd
