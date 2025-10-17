@@ -2,15 +2,10 @@ import asyncio
 import logging
 import json
 import utils as ut
-import uuid
-import socket
 import game
 import config
 from config import server_data as server
 
-ut.init_logging()
-
-    
 async def handle_create_room(username, writer):
     room_id = ut.get_room_id()
     async with server.rooms_lock:
@@ -40,7 +35,7 @@ async def handle_create_room(username, writer):
         "data": room_data
     }
     await ut.broadcast(json.dumps(room_message) + '\n')
-    
+
     logging.info(f"User {username} created room {room_id}")
     logging.info(f"Waiting for another player to join room {room_id}")
 
@@ -87,18 +82,6 @@ async def handle_client(reader, writer):
                 elif command == "INVITE_PLAYER":
                     if username:
                         await handle_invite_player(params, username, writer)
-                    else:
-                        await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
-                elif command == "ACCEPT_INVITE":
-                    if username:
-                        await handle_accept_invite(params, username, writer)
-                    else:
-                        await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
-                elif command == "DECLINE_INVITE":
-                    if username:
-                        await handle_decline_invite(params, username, writer)
                     else:
                         await ut.send_message(writer, ut.build_response("error", "Not logged in"))
 
@@ -150,7 +133,7 @@ async def handle_client(reader, writer):
                     }
                     await ut.broadcast(json.dumps(online_users_message) + '\n')
                     logging.info(f"User disconnected: {username}")
-                    
+
                     async with server.rooms_lock:
                         remove_room = []
                         for room in server.rooms:
@@ -159,7 +142,7 @@ async def handle_client(reader, writer):
                         for room in remove_room:
                             logging.info(f"Removed room {room}")
                             del server.rooms[room]
-                                
+
                 except Exception as e:
                     logging.error(f"Failed to broadcast updated online users list after disconnection: {e}")
         try:
@@ -176,7 +159,7 @@ async def handle_show_status(writer):
                 {"username": user, "status": info["status"]}
                 for user, info in server.online_users.items()
             ]
-        
+
         async with server.rooms_lock:
             rooms_data = [
                 {
@@ -186,14 +169,14 @@ async def handle_show_status(writer):
                 }
                 for r_id, room in server.rooms.items()
             ]
-        
+
         status_message = "------ List of Rooms ------\n"
         if not rooms_data:
             status_message += "There are no rooms available :(\n"
         else:
             for room in rooms_data:
                 status_message += f"Room ID: {room['room_id']} | Creator: {room['creator']} | Status: {room['status']}\n"
-        
+
         status_message += "----------------------------\n\n"
         status_message += "--- List of Online Users ---\n"
         if not users_data:
@@ -202,7 +185,7 @@ async def handle_show_status(writer):
             for user in users_data:
                 status_message += f"User: {user['username']} - Status: {user['status']}\n"
         status_message += "----------------------------\nInput a command: "
-        
+
         status_response = {
             "status": "status",
             "message": status_message
@@ -261,82 +244,15 @@ async def handle_game_over(username):
     await ut.broadcast(json.dumps(rooms_message) + '\n')
 
     logging.info(f"User {username} has ended the game and is now idle.")
-    
-        
-async def handle_decline_invite(params, username, writer):
-    if len(params) != 2:
-        await ut.send_message(writer, ut.build_response("error", "Invalid DECLINE_INVITE command"))
-        return
-    
-    room_id, udp_port = params
-    inviter_username = username
-    
-    # send UDP invite
-    decline_message = {
-        "status": "invite_declined",
-        "from": username,
-        "room_id": room_id
-    }
 
-    try:
-        loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: asyncio.DatagramProtocol(),
-            remote_addr=(config.HOST, udp_port)
-        )
-        transport.sendto(json.dumps(decline_message).encode())
-        transport.close()
-        
-        logging.info(f"User {username} declined invitation from {inviter_username} to room: {room_id}")
-        await ut.send_message(writer, ut.build_response("success", f"DECLINE_INVITE_SUCCESS {room_id}"))
 
-    except Exception as e:
-        logging.error(f"[UDP] Failed decline invite from to user on port {udp_port}: {e}")
-        await ut.send_message(writer, ut.build_response("error", "Failed to send UDP invite"))
-            
-    
-async def handle_accept_invite(params, username, writer):
-    if len(params) != 2:
-        await ut.send_message(writer, ut.build_response("error", "Invalid ACCEPT_INVITE command"))
-        return
-    
-    room_id, udp_port = params
-    
-    # Send accept message via udp
-    try:
-        accept_message = {
-            "status": "invite_accepted",
-            "from": username,
-            "room_id": room_id
-        }
-
-        loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: asyncio.DatagramProtocol(),
-            remote_addr=(config.HOST, udp_port)
-        )
-        transport.sendto(json.dumps(accept_message).encode())
-        transport.close()
-
-        logging.info(f"[UDP] User {username} accepted invitation to room: {room_id}")
-        await ut.send_message(writer, ut.build_response("success", f"ACCEPT_INVITE_SUCCESS {room_id}"))
-
-        # Notify server to join room
-        await ut.send_command(writer, "JOIN_ROOM", [room_id])
-        logging.info(f"[TCP] User {username} joined room {room_id} after UDP accept.")
-        
-    except Exception as e:
-        logging.error(f"[UDP] Failed to send accept invite from {username} on port {udp_port}: {e}")
-        await ut.send_message(writer, ut.build_response("error", "Failed to send UDP accept"))
-        
-    
 async def handle_invite_player(params, username, writer):
     if len(params) != 2:
         await ut.send_message(writer, ut.build_response("error", "Invalid INVITE_PLAYER command"))
         return
 
     target_port, room_id = params
-    
+
     try:
         udp_port = int(target_port)
     except ValueError:
@@ -356,29 +272,9 @@ async def handle_invite_player(params, username, writer):
             await ut.send_message(writer, ut.build_response("error", "Room is full"))
             return
 
-    # send UDP invite
-    invite_message = {
-        "status": "invite",
-        "from": username,
-        "room_id": room_id
-    }
+    await ut.send_message(writer, ut.build_response("success", f"SEND_INVITE {udp_port} {room_id}"))
 
-    try:
-        loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: asyncio.DatagramProtocol(),
-            remote_addr=(config.HOST, udp_port)
-        )
-        transport.sendto(json.dumps(invite_message).encode())
-        transport.close()
 
-        # await ut.send_message(writer, ut.build_response("success", f"INVITE_SENT {udp_port} {room_id}"))
-        logging.info(f"[UDP] User {username} invited user on port {udp_port} to join room {room_id}")
-
-    except Exception as e:
-        logging.error(f"[UDP] Failed to send invite to user on port {udp_port}: {e}")
-        # await ut.send_message(writer, ut.build_response("error", "Failed to send UDP invite"))
-        
 async def handle_join_room(params, username, writer):
     if len(params) != 1:
         await ut.send_message(writer, ut.build_response("error", "Invalid JOIN_ROOM command"))
@@ -468,8 +364,15 @@ async def handle_join_room(params, username, writer):
 
     await ut.broadcast(json.dumps(public_rooms_message) + '\n')
     logging.info(f"User {username} has joined room {room_id}")
-        
-async def main():  
+
+
+async def main():
+    # init logger
+    with open('logger.log', 'w'):
+        pass
+
+    ut.init_logging()
+
     server_ = await asyncio.start_server(handle_client, config.HOST, config.PORT)
     addr = server_.sockets[0].getsockname()
     logging.info(f"Lobby Server running on {addr}")

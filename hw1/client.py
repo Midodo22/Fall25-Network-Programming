@@ -4,21 +4,12 @@ import sys
 import logging
 import random
 from functools import partial
-import traceback
 
-import server as sv
 import utils as ut
 import game
 import config
 import socket
 from config import server_data as server
-
-logging.basicConfig(
-    filename='client.log',
-    filemode='a',
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
-)
 
 peer_info = {
     "role": None,
@@ -54,6 +45,9 @@ COMMANDS = [
 """
 For server
 """
+username = None
+
+
 async def handle_server_messages(reader, writer, game_in_progress, logged_in):
     while True:
         try:
@@ -70,12 +64,12 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
             message = data.decode().strip()
             if not message:
                 continue
-            
+
             try:
                 message_json = json.loads(message)
                 status = message_json.get("status")
                 msg = message_json.get("message", "")
-                
+
                 if status == "success":
                     if msg.startswith("REGISTRATION_SUCCESS"):
                         print("\nRegistration successful, please log in.\n")
@@ -93,22 +87,9 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                         parts = msg.split()
                         room_id = parts[1]
                         print(f"\nSuccessfully joined room {room_id}.\n")
-                    elif msg.startswith("INVITE_SENT"):
-                        print(f"\nInvite has been sent.\n")
 
                 elif status == "error":
                     print(f"\nError: {msg}\n")
-                elif status == "invite":
-                    sender = message_json.get("from")
-                    room_id = message_json.get("room_id")
-                    response = await get_user_input(f"\nYou have received an invite from {sender} Would you like to join their room {room_id}? (yes/no)：\n")
-                    if response == 'yes':
-                        await ut.send_command(writer, "ACCEPT_INVITE", [room_id])
-                        logging.info(f"You have accepted the invite to join room {room_id}.")
-                    else:
-                        await ut.send_command(writer, "DECLINE_INVITE", [sender, room_id])
-                        print("You have declined the invite.")
-                        logging.info(f"Invite to {room_id} has been declined.")
                 elif status == "invite_declined":
                     sender = message_json.get("from")
                     room_id = message_json.get("room_id")
@@ -132,16 +113,16 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                     peer_info["own_port"] = message_json.get("own_port")
                     peer_info["room_id"] = message_json.get("room_id")
                     room_id = peer_info["room_id"]
-                    
+
                     # Initialize local board for this room
                     if not hasattr(server, "rooms"):
                         server.rooms = {}
                     if room_id not in server.rooms:
                         server.rooms[room_id] = {"board": game.board()}
-                        
+
                     logging.debug(f"Role: {peer_info['role']} waiting for peer: {peer_info['peer_ip']} waiting for port: {peer_info['peer_port']}, self port: {peer_info['own_port']}")
                     print(f"Role: {peer_info['role']} waiting for peer: {peer_info['peer_ip']} waiting for port: {peer_info['peer_port']}, self port: {peer_info['own_port']}")
-                    
+
                     asyncio.create_task(initiate_game(game_in_progress, writer, room_id))
                     game_in_progress.value = True
                 elif status == "status":
@@ -165,6 +146,7 @@ async def get_user_input(prompt):
 
 async def handle_user_input(writer, game_in_progress, logged_in):
     while True:
+        global username
         try:
             if game_in_progress.value:
                 await asyncio.sleep(0.1)
@@ -203,7 +185,7 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 # make sure program exits
                 asyncio.get_event_loop().stop()
                 break
-            
+
             elif command == "HELP":
                 print("\nAvailable commands:")
                 for cmd in COMMANDS:
@@ -221,6 +203,7 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 if len(params) != 2:
                     print("Usage: login <username> <password>")
                     continue
+                username = params[0]
                 await ut.send_command(writer, "LOGIN", params)
 
             elif command == "LOGOUT":
@@ -236,11 +219,13 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 if len(params) != 2:
                     print("Usage: invite <Port> <Room ID>")
                     continue
-                await ut.send_command(writer, "INVITE_PLAYER", params)
+                # await ut.send_command(writer, "INVITE_PLAYER", params)
+                udp_port, room_id = params
+                await send_invite(udp_port, room_id, username)
 
             elif command == "SHOW_STATUS":
                 await ut.send_command(writer, "SHOW_STATUS", [])
-                
+
             elif command == "SCAN":
                 await udp_discover_players()
 
@@ -272,6 +257,8 @@ async def handle_user_input(writer, game_in_progress, logged_in):
 """
 For game
 """
+
+
 async def initiate_game(game_in_progress, writer, room_id):
     logging.info(f"Initiating game for room {room_id}...")
     try:
@@ -295,7 +282,7 @@ async def start_game_as_host(own_port, room_id):
     # server = await asyncio.start_server(handle_game_client, config.HOST, own_port, room_id)
     logging.info(f"Waiting for client to connect to {own_port} as game server...")
     print(f"Waiting for client to connect to {own_port} as game server...")
-    
+
     global server_close_event
     server_close_event = asyncio.Event()
 
@@ -350,6 +337,7 @@ async def start_game_as_client(peer_ip, peer_port, room_id, max_retries=10, retr
         writer.close()
         await writer.wait_closed()
 
+
 async def game_loop(reader, writer, role):
     board = [[' ' for _ in range(7)] for _ in range(6)]
     my_symbol = 'X' if role == "Host" else 'O'
@@ -358,9 +346,9 @@ async def game_loop(reader, writer, role):
     game_over = False
 
     while not game_over:
-        display_connectfour_board(board)
+        display_board(board)
         if current_turn == my_symbol:
-            column = await get_connectfour_move(board, my_symbol)
+            column = await get_move(board, my_symbol)
             if column == -1:
                 print("This column is full, please choose another.")
                 continue
@@ -385,33 +373,36 @@ async def game_loop(reader, writer, role):
                 print("Invalid message.")
                 continue
 
-        if check_connectfour_winner(board, row, column, my_symbol):
-            display_connectfour_board(board)
+        if check_winner(board, row, column, my_symbol):
+            display_board(board)
             print(f"Player {my_symbol} won!")
             game_over = True
             server_close_event.set()
-        elif check_connectfour_winner(board, row, column, opponent_symbol):
-            display_connectfour_board(board)
+        elif check_winner(board, row, column, opponent_symbol):
+            display_board(board)
             print(f"Player {opponent_symbol} won!")
             game_over = True
             server_close_event.set()
         elif all(board[0][col] != ' ' for col in range(7)):
-            display_connectfour_board(board)
+            display_board(board)
             print("Draw!")
             game_over = True
             server_close_event.set()
         else:
             # Switch turns
             current_turn = opponent_symbol if current_turn == my_symbol else my_symbol
+    server_close_event.set()
+            
 
-def display_connectfour_board(board):
+def display_board(board):
     print("\nCurrent board: ")
     for row in board:
         print('|'.join(row))
         print('-' * 13)
     print('0 1 2 3 4 5 6\n')
 
-async def get_connectfour_move(board, player):
+
+async def get_move(board, player):
     while True:
         try:
             column_input = await get_user_input(f"Player {player}, pleas choose a column (0-6): ")
@@ -423,6 +414,7 @@ async def get_connectfour_move(board, player):
         except ValueError:
             print("Please choose a number between 0 and 6.")
 
+
 def place_piece(board, column, player):
     for row in reversed(range(6)):
         if board[row][column] == ' ':
@@ -431,8 +423,9 @@ def place_piece(board, column, player):
     print("This column is full.")
     return -1  # Invalid move
 
-def check_connectfour_winner(board, row, column, player):
-    directions = [(0,1), (1,0), (1,1), (1,-1)]
+
+def check_winner(board, row, column, player):
+    directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
     for dx, dy in directions:
         count = 1
         for dir in [1, -1]:
@@ -447,16 +440,6 @@ def check_connectfour_winner(board, row, column, player):
         if count >= 4:
             return True
     return False
-
-async def check_move(input, board):
-    try:
-        move = int(input)
-        # cur_board = server.rooms[room_id]['board']
-        if move > 6 or board.BP1[move - 1] == 0:
-            return False
-        return True
-    except:
-        return False
 
 
 """
@@ -490,8 +473,9 @@ def display_public_rooms(public_rooms):
 """
 For UDP Invite
 """
-async def handle_invite(message, udp_sock, tcp_writer, addr):
+async def handle_receive_invite(message, udp_sock, tcp_writer, addr):
     inviter = message["from"]
+    inviter_port = message["from_port"]
     room_id = message["room_id"]
     print(f"\n[INVITE] You were invited by {inviter} to join room {room_id}")
 
@@ -499,19 +483,19 @@ async def handle_invite(message, udp_sock, tcp_writer, addr):
     while True:
         response = input(f"Would you like to accept the invite? Type \"yes\" or \"no\".\n").strip()
 
-        udp_port = udp_sock.getsockname()[1]
         if response.lower() == "yes":
             print("Accepted invite.")
-            await sv.handle_accept_invite([room_id, udp_port], inviter, tcp_writer)
+            await handle_accept_invite([room_id, inviter_port], username, tcp_writer)
             break
         elif response.lower() == "no":
             print("Declined invite.")
-            await sv.handle_decline_invite([room_id, udp_port], inviter, tcp_writer)
+            await handle_decline_invite([room_id, inviter_port], username, tcp_writer)
             break
         else:
             print("Invalid input. Please type \"yes\" or \"no\".")
-    
+
     return
+
 
 async def udp_listener(udp_sock, tcp_writer):
     """
@@ -531,11 +515,11 @@ async def udp_listener(udp_sock, tcp_writer):
 
             # Handle invite
             if message.get("status") == "invite":
-                await handle_invite(message, udp_sock, tcp_writer, addr)
+                await handle_receive_invite(message, udp_sock, tcp_writer, addr)
             elif message.get("status") == "invite_declined":
-                print(f"[UDP] User from {addr} has declined your invite")
+                print(f"[UDP] User from {addr} has declined your invite.")
             elif message.get("status") == "invite_accepted":
-                print(f"[UDP] User from {addr} has accepted your invite")
+                print(f"[UDP] User from {addr} has accepted your invite.")
             else:
                 print(f"[UDP] Received unknown message from {addr}: {message}")
 
@@ -553,10 +537,10 @@ async def udp_discover_players():
         try:
             sock.bind(('0.0.0.0', port))  # try to bind
         except OSError:
-            found.append(port)
+            if self_port != port:
+                found.append(port)
         finally:
-            sock.close() 
-
+            sock.close()
 
     if found:
         print(f"Discovery complete. Found the following players: {found}")
@@ -565,10 +549,107 @@ async def udp_discover_players():
     return
 
 
+async def send_invite(udp_port, room_id, username):
+    invite_message = {
+        "status": "invite",
+        "from": username,
+        "room_id": room_id,
+        "from_port": self_port
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: asyncio.DatagramProtocol(),
+            remote_addr=(config.HOST, udp_port)
+        )
+        transport.sendto(json.dumps(invite_message).encode())
+        transport.close()
+
+        logging.info(f"[UDP] User {username} invited user on port {udp_port} to join room {room_id}")
+
+    except Exception as e:
+        logging.error(f"[UDP] Failed to send invite to user on port {udp_port}: {e}")
+
+    print(f"\nInvite has been sent.\n")
+
+
+async def handle_decline_invite(params, username, writer):
+    if len(params) != 2:
+        await ut.send_message(writer, ut.build_response("error", "Invalid DECLINE_INVITE command"))
+        return
+
+    room_id, udp_port = params
+    inviter_username = username
+
+    # send UDP invite
+    decline_message = {
+        "status": "invite_declined",
+        "from": username,
+        "room_id": room_id
+    }
+
+    try:
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: asyncio.DatagramProtocol(),
+            remote_addr=(config.HOST, udp_port)
+        )
+        transport.sendto(json.dumps(decline_message).encode())
+        transport.close()
+        
+        logging.info(f"User {username} declined invitation from {inviter_username} to room: {room_id}")
+        await ut.send_message(writer, ut.build_response("success", f"DECLINE_INVITE_SUCCESS {room_id}"))
+
+    except Exception as e:
+        logging.error(f"[UDP] Failed decline invite from to user on port {udp_port}: {e}")
+        await ut.send_message(writer, ut.build_response("error", "Failed to send UDP invite"))
+
+
+async def handle_accept_invite(params, username, writer):
+    if len(params) != 2:
+        await ut.send_message(writer, ut.build_response("error", "Invalid ACCEPT_INVITE command"))
+        return
+
+    room_id, udp_port = params
+
+    # Send accept message via udp
+    try:
+        accept_message = {
+            "status": "invite_accepted",
+            "from": username,
+            "room_id": room_id
+        }
+
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: asyncio.DatagramProtocol(),
+            remote_addr=(config.HOST, udp_port)
+        )
+        transport.sendto(json.dumps(accept_message).encode())
+        transport.close()
+
+        logging.info(f"[UDP] User {username} accepted invitation to room: {room_id}")
+        await ut.send_message(writer, ut.build_response("success", f"ACCEPT_INVITE_SUCCESS {room_id}"))
+
+        # Notify server to join room
+        await ut.send_command(writer, "JOIN_ROOM", [room_id])
+        logging.info(f"[TCP] User {username} joined room {room_id} after UDP accept.")
+
+    except Exception as e:
+        logging.error(f"[UDP] Failed to send accept invite from {username} on port {udp_port}: {e}")
+        await ut.send_message(writer, ut.build_response("error", "Failed to send UDP accept"))
+
+
+self_port = None
+
+
 async def main():
+    ut.init_logging()
+
     server_ip = config.HOST
     server_port = config.PORT
-    
+
     # TCP connection
     try:
         reader, writer = await asyncio.open_connection(server_ip, server_port)
@@ -582,7 +663,7 @@ async def main():
         print(f"Unable to connect to server: {e}")
         logging.error(f"Unable to connect to server: {e}")
         return
-    
+
     # UDP connection
     udp_sock = None
     while True:
@@ -606,6 +687,8 @@ async def main():
 
     game_in_progress = type('', (), {'value': False})()
     logged_in = type('', (), {'value': False})()
+    global self_port
+    self_port= udp_port
 
     asyncio.create_task(handle_server_messages(reader, writer, game_in_progress, logged_in))
     asyncio.create_task(handle_user_input(writer, game_in_progress, logged_in))
@@ -621,6 +704,7 @@ async def main():
     print("Client end closed.")
     logging.info("Client end closed.")
     sys.exit()
+
 
 if __name__ == "__main__":
     try:
