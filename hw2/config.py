@@ -5,7 +5,7 @@ import json
 HOST = '192.168.56.1'
 PORT = 52273
 DB_PORT = 52274
-LOG_FILE = 'server.log'
+LOG_FILE = 'logger.log'
 
 P2P_PORT_RANGE = (63042, 63142)
 available_ports = {}
@@ -18,14 +18,19 @@ class server:
     def __init__(self):
         self.online_users = {}
         self.online_users_lock = asyncio.Lock()
-        self.rooms = {}
         self.rooms_lock = asyncio.Lock()
-        try:
-            with open('userdata.json', 'r') as f:
-                self.users = json.load(f)
-        except:
-            self.users = {}
         self.user_lock = asyncio.Lock()
         self.db_lock = asyncio.Lock()
+
+        try:
+            with open('data.json', 'r') as f:
+                data = json.load(f)
+            
+            self.users = data["users"]
+            self.rooms = data["rooms"]
+
+        except:
+            self.users = {}
+            self.rooms = {}
         
 tetris_server = server()

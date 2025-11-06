@@ -32,7 +32,7 @@ COMMANDS = [
     "register <Username> <Password> - Register new account",
     "login <Username> <Password> - Log in",
     "logout - Log out",
-    "create - Create room",
+    "create <Room Type (private or public)> - Create room",
     "invite <Port> <Room ID> - Invite user to join room",
     "exit - Leave client",
     "help - Displays list of available commands",

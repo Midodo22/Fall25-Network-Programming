@@ -1,5 +1,6 @@
 import struct
 import asyncio
+import hashlib
 
 import logging
 import json
@@ -78,7 +79,10 @@ async def unpack_message(reader):
 
         # Read the message body
         body = await reader.readexactly(length)
-        return body.decode('utf-8')
+        try:
+            return body.decode('utf-8')
+        except json.JSONDecodeError:
+            logging.error("Invalid message format")
 
     except asyncio.IncompleteReadError:
         logging.error("Connection closed unexpectedly")
@@ -88,6 +92,99 @@ async def unpack_message(reader):
         logging.error(f"Failed to receive message: {e}")
         return None
 
+
+"""
+User registration
+"""
+def hash(p):
+    pswd = hashlib.sha256(p.encode()).hexdigest()
+    return str(pswd)
+
+
+async def handle_login(params, reader, writer):
+    if len(params) != 2:
+        await send_message(writer, build_response("error", "Invalid LOGIN command"))
+        return
+    username, password = params
+
+    async with tetris_server.user_lock:
+        if username not in tetris_server.users:
+            await send_message(writer, build_response("error", "User not registered."))
+            return
+        else:
+            hashed_pswd = hash(password)
+            if tetris_server.users[username] != hashed_pswd:
+                await send_message(writer, build_response("error", "Password incorrect."))
+            else:  # User logs in
+                async with tetris_server.online_users_lock:
+                    if username in tetris_server.online_users:
+                        await send_message(writer, build_response("error", "User already logged in"))
+                        logging.warning(f"User {username} tried to login repeatedly.")
+                        return
+                    else:
+                        client_ip, client_port = writer.get_extra_info('peername')
+                        tetris_server.online_users[username] = {
+                            "reader": reader,
+                            "writer": writer,
+                            "status": "idle",
+                            "ip": client_ip,
+                            "port": client_port  # TCP port
+                        }
+                await send_message(writer, build_response("success", "LOGIN_SUCCESS"))
+                await send_lobby_info(writer)
+                async with tetris_server.online_users_lock:
+                    users_data = [
+                        {"username": user, "status": info["status"]}
+                        for user, info in tetris_server.online_users.items()
+                    ]
+                online_users_message = {
+                    "status": "update",
+                    "type": "online_users",
+                    "data": users_data
+                }
+                logging.info(f"User {username} logged in successfully.")
+
+
+async def handle_logout(username, writer):
+    user_removed = False
+    async with tetris_server.online_users_lock:
+        if username in tetris_server.online_users:
+            del tetris_server.online_users[username]
+            user_removed = True
+
+    if user_removed:
+        try:
+            await send_message(writer, build_response("success", "LOGOUT_SUCCESS"))
+        except Exception as e:
+            logging.error(f"Failed to send logout success message to {username}: {e}")
+
+        try:
+            # Update online user list
+            async with tetris_server.online_users_lock:
+                users_data = [
+                    {"username": user, "status": info["status"]}
+                    for user, info in tetris_server.online_users.items()
+                ]
+
+            online_users_message = {
+                "status": "update",
+                "type": "online_users",
+                "data": users_data
+            }
+            logging.info(f"User {username} logged out.")
+        except Exception as e:
+            logging.error(f"Failed to broadcast updated online users list after logout: {e}")
+
+        async with tetris_server.rooms_lock:
+            remove_room = []
+            for room in tetris_server.rooms:
+                if tetris_server.rooms[room]['creator'] == username:
+                    remove_room.append(room)
+            for room in remove_room:
+                logging.info(f"Removed room {room}")
+                del tetris_server.rooms[room]
+    else:
+        await send_message(writer, build_response("error", "User not logged in."))
 
 
 async def send_lobby_info(writer):
@@ -147,6 +244,6 @@ def get_room_id():
 Manage logger
 """
 def init_logging():
-    logging.basicConfig(level=logging.INFO, filename="logger.log", filemode="a",
+    logging.basicConfig(level=logging.INFO, filename=config.LOG_FILE, filemode="a",
                         format='%(asctime)s [%(levelname)s] %(message)s',
                         datefmt='%Y/%m/%d %H:%M:%S')

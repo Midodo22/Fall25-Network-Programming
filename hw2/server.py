@@ -3,123 +3,52 @@ import logging
 import json
 import utils as ut
 import config
-from config import tetris_server as tetris_server
+from config import tetris_server
 
 
 async def handle_client(reader, writer, db_reader, db_writer):
     addr = writer.get_extra_info('peername')
-    logging.info(f"Connection from {addr}")
+    logging.info(f"[Lobby] Connection from {addr}")
     username = None
+    
+    # From client to db
+    async def handle_client_messages():
+        try:
+            while True:
+                message = await ut.unpack_message(reader)
+                if not message:
+                    continue
+                await process_client_message(message, reader, writer, db_reader, db_writer)
+        except Exception as e:
+            await ut.send_message(writer, ut.build_response("error", "Server error"))
+            logging.error(f"[Lobby] Error when processing client at {addr}: {e}")
+
+    # Db to client
+    async def handle_db_messages():
+        try:
+            while True:
+                message = await ut.unpack_message(db_reader)
+                if not message:
+                    continue
+                await process_db_message(message, reader, writer, db_reader, db_writer)
+        except Exception as e:
+            await ut.send_message(writer, ut.build_response("error", "Server error"))
+            logging.error(f"[Lobby] Error when processing database server: {e}")
+
+    # Run both at the same time
     try:
-        while True:
-            message = await ut.unpack_message(reader)
-            if not message:
-                # Client disconnected
-                break
-            try:
-                message_json = json.loads(message)
-                status = message_json.get("status")
-                
-                # db messages starts with status
-                if status == "command":
-                    command = message_json.get("command", "").upper()
-                    params = message_json.get("params", [])
+        client_task = asyncio.create_task(handle_client_messages())
+        db_task = asyncio.create_task(handle_db_messages())
 
-                    if command == "REGISTER":
-                        await handle_register(params, writer, db_reader, db_writer)
+        done, pending = await asyncio.wait(
+            [client_task, db_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
 
-                    elif command == "LOGIN":
-                        await handle_login(params, reader, writer, db_reader, db_writer)
-                        if len(params) >= 1:
-                            username = params[0]
+        # Cleanup
+        for task in pending:
+            task.cancel()
 
-                    elif command == "LOGOUT":
-                        if username:
-                            await handle_logout(username, writer, db_reader, db_writer)
-                            username = None
-                        else:
-                            await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
-                    elif command == "CREATE_ROOM":
-                        if username:
-                            await handle_create_room(username, writer, db_reader, db_writer)
-                        else:
-                            await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
-                    elif command == "INVITE_PLAYER":
-                        if username:
-                            await handle_invite_player(params, username, writer, db_reader, db_writer)
-                        else:
-                            await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
-                    elif command == "GAME_OVER":
-                        if username:
-                            await handle_game_over(username)
-                        else:
-                            await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-                    
-                    elif command == "SHOW_STATUS":
-                        if username:
-                            await handle_show_status(writer)
-                        else:
-                            await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-                    elif command == "JOIN_ROOM":
-                        if username:
-                            await handle_join_room(params, username, writer)
-                        else:
-                            await ut.send_message(writer, ut.build_response("error", "Not logged in"))
-
-                    else:
-                        await ut.send_message(writer, ut.build_response("error", "Unknown command"))
-                
-                elif status == "success":
-                    msg = message_json.get("message", "")
-                    if msg.startswith("REGISTRATION_SUCCESS"):
-                        params = message_json.get("params", "")
-                        client_reader, client_writer = params
-                        await ut.send_message(client_writer, ut.build_response("success", "REGISTRATION_SUCCESS"))
-                    elif msg.startswith("LOGIN_SUCCESS"):
-                        params = message_json.get("params", "")
-                        client_reader, client_writer = params
-                        await ut.send_message(client_writer, ut.build_response("success", "LOGIN_SUCCESS"))
-                    elif msg.startswith("LOGOUT_SUCCESS"):
-                        print("\nYou have logged out successfully.")
-                        logged_in.value = False
-                    elif msg.startswith("CREATE_ROOM_SUCCESS"):
-                        parts = msg.split()
-                        room_id = parts[1]
-                        print(f"\nRoom successfully created. The room ID is {room_id}.\n")
-                    elif msg.startswith("JOIN_ROOM_SUCCESS"):
-                        parts = msg.split()
-                        room_id = parts[1]
-                        print(f"\nSuccessfully joined room {room_id}.\n")
-
-                elif status == "error":
-                    print(f"\nError: {msg}\n")
-                    
-                elif status == "invite_declined":
-                    sender = message_json.get("from")
-                    room_id = message_json.get("room_id")
-                    print(f"\nUser {sender} has declined your invite to room {room_id}.")
-                    logging.info(f"User {sender} declined joining {room_id}.")
-
-                elif status == "update":
-                    update_type = message_json.get("type")
-                    if update_type == "online_users":
-                        online_users = message_json.get("data", [])
-                    elif update_type == "room_status":
-                        room_id = message_json.get("room_id")
-                        updated_status = message_json.get("status")
-                        print(f"\nRoom {room_id} status updated as {updated_status}")
-                
-            except json.JSONDecodeError:
-                await ut.send_message(writer, ut.build_response("error", "Invalid message format"))
-            
-            except Exception as e:
-                logging.error(f"Error while processing message: {e}")
-                await ut.send_message(writer, ut.build_response("error", "Server error"))
-    except Exception as e:
-        logging.error(f"Error when processing client at {addr}: {e}")
     finally:
         if username:
             user_removed = False
@@ -147,11 +76,11 @@ async def handle_client(reader, writer, db_reader, db_writer):
                             if tetris_server.rooms[room]['creator'] == username:
                                 remove_room.append(room)
                         for room in remove_room:
-                            logging.info(f"Removed room {room}")
+                            logging.info(f"[Lobby] Removed room {room}")
                             del tetris_server.rooms[room]
 
                 except Exception as e:
-                    logging.error(f"Error when processing user disconnection: {e}")
+                    logging.error(f"[Lobby] Error when processing user disconnection: {e}")
         try:
             writer.close()
             await writer.wait_closed()
@@ -159,10 +88,124 @@ async def handle_client(reader, writer, db_reader, db_writer):
             pass
 
 
+async def process_client_message(message, client_reader, client_writer, db_reader, db_writer):
+    try:
+        message_json = json.loads(message)
+        command = message_json.get("command", "").upper()
+        params = message_json.get("params", [])
+
+        if command == "REGISTER":
+            await handle_register(params, client_writer, db_writer)
+
+        elif command == "LOGIN":
+            await ut.handle_login(params, client_writer, db_writer)
+            if len(params) >= 1:
+                username = params[0]
+
+        elif command == "LOGOUT":
+            if username:
+                await ut.handle_logout(username, client_writer)
+                username = None
+            else:
+                await ut.send_message(client_writer, ut.build_response("error", "Not logged in"))
+
+        elif command == "CREATE_ROOM":
+            if username:
+                await handle_create_room(params, username, client_writer, db_writer)
+            else:
+                await ut.send_message(client_writer, ut.build_response("error", "Not logged in"))
+
+        elif command == "INVITE_PLAYER":
+            if username:
+                await handle_invite_player(params, username, client_writer, db_writer)
+            else:
+                await ut.send_message(client_writer, ut.build_response("error", "Not logged in"))
+
+        elif command == "GAME_OVER":
+            if username:
+                await handle_game_over(username)
+            else:
+                await ut.send_message(client_writer, ut.build_response("error", "Not logged in"))
+        
+        elif command == "SHOW_STATUS":
+            if username:
+                await handle_show_status(client_writer)
+            else:
+                await ut.send_message(client_writer, ut.build_response("error", "Not logged in"))
+        elif command == "JOIN_ROOM":
+            if username:
+                await handle_join_room(params, username, client_writer)
+            else:
+                await ut.send_message(client_writer, ut.build_response("error", "Not logged in"))
+
+        else:
+            await ut.send_message(client_writer, ut.build_response("error", "Unknown command"))
+
+    except json.JSONDecodeError:
+        await ut.send_message(client_writer, ut.build_response("error", "Invalid message format"))
+
+
+async def process_db_message(message, client_reader, client_writer, db_reader, db_writer):
+    try:
+        try:
+            message_json = json.loads(message)
+        except Exception as e:
+            logging.log(f"[DB] Error when unpacking message: {e}")
+        
+        status = message_json.get("status")
+        msg = message_json.get("message", "")
+        
+        if status == "success":
+            if msg.startswith("REGISTRATION_SUCCESS"):
+                params = message_json.get("params", "")
+                client_reader, client_writer = params
+                await ut.send_message(client_writer, ut.build_response("success", "REGISTRATION_SUCCESS"))
+            
+            elif msg.startswith("LOGIN_SUCCESS"):
+                params = message_json.get("params", "")
+                client_reader, client_writer = params
+                await ut.send_message(client_writer, ut.build_response("success", "LOGIN_SUCCESS"))
+            
+            elif msg.startswith("LOGOUT_SUCCESS"):
+                print("\nYou have logged out successfully.")
+            
+            elif msg.startswith("CREATE_ROOM_SUCCESS"):
+                parts = msg.split()
+                room_id = parts[1]
+                print(f"\nRoom successfully created. The room ID is {room_id}.\n")
+            
+            elif msg.startswith("JOIN_ROOM_SUCCESS"):
+                parts = msg.split()
+                room_id = parts[1]
+                print(f"\nSuccessfully joined room {room_id}.\n")
+
+        elif status == "error":
+            print(f"\nError: {msg}\n")
+            
+        elif status == "invite_declined":
+            sender = message_json.get("from")
+            room_id = message_json.get("room_id")
+            print(f"\nUser {sender} has declined your invite to room {room_id}.")
+            logging.info(f"[Lobby] User {sender} declined joining {room_id}.")
+
+        elif status == "update":
+            update_type = message_json.get("type")
+            if update_type == "online_users":
+                online_users = message_json.get("data", [])
+            elif update_type == "room_status":
+                room_id = message_json.get("room_id")
+                updated_status = message_json.get("status")
+                print(f"\nRoom {room_id} status updated as {updated_status}")
+                
+    except Exception as e:
+        logging.error(f"[Lobby] Error handling DB message: {e}")
+
+
+
 """
-User-related
+User-related, need to use db server
 """
-async def handle_register(params, writer, db_reader, db_writer):
+async def handle_register(params, writer, db_writer):
     if len(params) != 2:
         await ut.send_message(writer, ut.build_response("error", "Invalid REGISTER command"))
         return
@@ -173,155 +216,52 @@ async def handle_register(params, writer, db_reader, db_writer):
         return
     
     await ut.send_command(db_writer, "REGISTER", params)
+    logging.info(f"[Lobby] Sent command to register user {username}.")
 
-
-async def handle_login(params, reader, writer, db_reader, db_writer):
-    if len(params) != 2:
-        await ut.send_message(writer, ut.build_response("error", "Invalid LOGIN command"))
+"""
+Game-related
+"""
+async def handle_create_room(params, username, writer, db_writer):
+    if len(params) != 1:
+        await ut.send_message(writer, ut.build_response("error", "Invalid CREATE_ROOM command"))
         return
-    username, password = params
-
-    async with tetris_server.user_lock:
-        if username not in tetris_server.users:
-            await ut.send_message(writer, ut.build_response("error", "User not registered."))
-            return
-        else:
-            # Db server handles anything database-related
-            await ut.send_command(db_writer, "LOGIN", params)
+    room_type = params.lower()
+    
+    if room_type not in ['public', 'private']:
+        await ut.send_message(writer, ut.build_response("error", "Invalid room type"))
+        return
+    
+    await ut.send_command(db_writer, "CREATE_ROOM", [username, room_type])
 
 
-async def handle_logout(username, writer):
-    user_removed = False
-    async with tetris_server.online_users_lock:
-        if username in tetris_server.online_users:
-            del tetris_server.online_users[username]
-            user_removed = True
 
-    if user_removed:
-        try:
-            await ut.send_message(writer, ut.build_response("success", "LOGOUT_SUCCESS"))
-        except Exception as e:
-            logging.error(f"Failed to send logout success message to {username}: {e}")
+async def handle_invite_player(params, username, writer):
+    if len(params) != 2:
+        await ut.send_message(writer, ut.build_response("error", "Invalid INVITE_PLAYER command"))
+        return
 
-        try:
-            # Update online user list
-            async with tetris_server.online_users_lock:
-                users_data = [
-                    {"username": user, "status": info["status"]}
-                    for user, info in tetris_server.online_users.items()
-                ]
+    target_port, room_id = params
 
-            online_users_message = {
-                "status": "update",
-                "type": "online_users",
-                "data": users_data
-            }
-            logging.info(f"User {username} logged out.")
-        except Exception as e:
-            logging.error(f"Failed to broadcast updated online users list after logout: {e}")
-
-        async with tetris_server.rooms_lock:
-            remove_room = []
-            for room in tetris_server.rooms:
-                if tetris_server.rooms[room]['creator'] == username:
-                    remove_room.append(room)
-            for room in remove_room:
-                logging.info(f"Removed room {room}")
-                del tetris_server.rooms[room]
-    else:
-        await ut.send_message(writer, ut.build_response("error", "User not logged in."))
-
-
-async def handle_show_status(writer):
     try:
-        async with tetris_server.online_users_lock:
-            users_data = [
-                {"username": user, "status": info["status"]}
-                for user, info in tetris_server.online_users.items()
-            ]
+        udp_port = int(target_port)
+    except ValueError:
+        await ut.send_message(writer, ut.build_response("error", "Invalid UDP port"))
+        return
 
-        async with tetris_server.rooms_lock:
-            rooms_data = [
-                {
-                    "room_id": r_id,
-                    "creator": room["creator"],
-                    "status": room["status"]
-                }
-                for r_id, room in tetris_server.rooms.items()
-            ]
-
-        status_message = "------ List of Rooms ------\n"
-        if not rooms_data:
-            status_message += "There are no rooms available :(\n"
-        else:
-            for room in rooms_data:
-                status_message += f"Room ID: {room['room_id']} | Creator: {room['creator']} | Status: {room['status']}\n"
-
-        status_message += "----------------------------\n\n"
-        status_message += "--- List of Online Users ---\n"
-        if not users_data:
-            status_message += "No users are online :(\n"
-        else:
-            for user in users_data:
-                status_message += f"User: {user['username']} - Status: {user['status']}\n"
-        status_message += "----------------------------\nInput a command: "
-
-        status_response = {
-            "status": "status",
-            "message": status_message
-        }
-        await ut.send_message(writer, json.dumps(status_response) + '\n')
-        logging.info("Sending SHOW_STATUS message to user")
-    except Exception as e:
-        logging.error(f"Error while processing SHOW_STATUS: {e}")
-        await ut.send_message(writer, ut.build_response("error", "Failed to retrieve status"))
-
-
-async def handle_game_over(username):
-    async with tetris_server.online_users_lock:
-        if username in tetris_server.online_users:
-            tetris_server.online_users[username]["status"] = "idle"
-
-    room_to_delete = None
+    # check room
     async with tetris_server.rooms_lock:
-        for room_id, room in list(tetris_server.rooms.items()):
-            if username in room["players"]:
-                room["players"].remove(username)
-                if len(room["players"]) == 0:
-                    room_to_delete = room_id
-                else:
-                    # If room still has players, update its status to "Waiting"
-                    room["status"] = "Waiting"
-                break
-        if room_to_delete:
-            del tetris_server.rooms[room_to_delete]
+        if room_id not in tetris_server.rooms:
+            await ut.send_message(writer, ut.build_response("error", "Room does not exist"))
+            return
+        room = tetris_server.rooms[room_id]
+        if room['creator'] != username:
+            await ut.send_message(writer, ut.build_response("error", "Only room creator can invite players"))
+            return
+        if len(room['players']) >= 2:
+            await ut.send_message(writer, ut.build_response("error", "Room is full"))
+            return
 
-    async with tetris_server.online_users_lock:
-        users_data = [
-            {"username": user, "status": info["status"]}
-            for user, info in tetris_server.online_users.items()
-        ]
-    online_users_message = {
-        "status": "update",
-        "type": "online_users",
-        "data": users_data
-    }
-
-    async with tetris_server.rooms_lock:
-        rooms_data = [
-            {
-                "room_id": r_id,
-                "creator": room["creator"],
-                "status": room["status"]
-            }
-            for r_id, room in tetris_server.rooms.items()
-        ]
-    rooms_message = {
-        "status": "update",
-        "data": rooms_data
-    }
-
-    logging.info(f"User {username} has ended the game and is now idle.")
+    await ut.send_message(writer, ut.build_response("success", f"SEND_INVITE {udp_port} {room_id}"))
 
 
 async def handle_join_room(params, username, writer):
@@ -397,7 +337,7 @@ async def handle_join_room(params, username, writer):
                 }
                 await ut.send_message(creator_info["writer"], json.dumps(creator_message) + '\n')
                 await ut.send_message(joiner_info["writer"], json.dumps(joiner_message) + '\n')
-        logging.info(f"[DB] Game server info has been sent to players in room {room_id}")
+        logging.info(f"[Lobby] Game server info has been sent to players in room {room_id}")
 
     async with tetris_server.rooms_lock:
         public_rooms_data = [
@@ -414,7 +354,101 @@ async def handle_join_room(params, username, writer):
         "data": public_rooms_data
     }
 
-    logging.info(f"User {username} has joined room {room_id}")
+    logging.info(f"[Lobby] User {username} has joined room {room_id}")
+
+
+
+
+async def handle_show_status(writer):
+    try:
+        async with tetris_server.online_users_lock:
+            users_data = [
+                {"username": user, "status": info["status"]}
+                for user, info in tetris_server.online_users.items()
+            ]
+
+        async with tetris_server.rooms_lock:
+            rooms_data = [
+                {
+                    "room_id": r_id,
+                    "creator": room["creator"],
+                    "status": room["status"]
+                }
+                for r_id, room in tetris_server.rooms.items()
+            ]
+
+        status_message = "------ List of Rooms ------\n"
+        if not rooms_data:
+            status_message += "There are no rooms available :(\n"
+        else:
+            for room in rooms_data:
+                status_message += f"Room ID: {room['room_id']} | Creator: {room['creator']} | Status: {room['status']}\n"
+
+        status_message += "----------------------------\n\n"
+        status_message += "--- List of Online Users ---\n"
+        if not users_data:
+            status_message += "No users are online :(\n"
+        else:
+            for user in users_data:
+                status_message += f"User: {user['username']} - Status: {user['status']}\n"
+        status_message += "----------------------------\nInput a command: "
+
+        status_response = {
+            "status": "status",
+            "message": status_message
+        }
+        await ut.send_message(writer, json.dumps(status_response) + '\n')
+        logging.info("[Lobby] Sending SHOW_STATUS message to user")
+    except Exception as e:
+        logging.error(f"[Lobby] Error while processing SHOW_STATUS: {e}")
+        await ut.send_message(writer, ut.build_response("error", "Failed to retrieve status"))
+
+
+async def handle_game_over(username):
+    async with tetris_server.online_users_lock:
+        if username in tetris_server.online_users:
+            tetris_server.online_users[username]["status"] = "idle"
+
+    room_to_delete = None
+    async with tetris_server.rooms_lock:
+        for room_id, room in list(tetris_server.rooms.items()):
+            if username in room["players"]:
+                room["players"].remove(username)
+                if len(room["players"]) == 0:
+                    room_to_delete = room_id
+                else:
+                    # If room still has players, update its status to "Waiting"
+                    room["status"] = "Waiting"
+                break
+        if room_to_delete:
+            del tetris_server.rooms[room_to_delete]
+
+    async with tetris_server.online_users_lock:
+        users_data = [
+            {"username": user, "status": info["status"]}
+            for user, info in tetris_server.online_users.items()
+        ]
+    online_users_message = {
+        "status": "update",
+        "type": "online_users",
+        "data": users_data
+    }
+
+    async with tetris_server.rooms_lock:
+        rooms_data = [
+            {
+                "room_id": r_id,
+                "creator": room["creator"],
+                "status": room["status"]
+            }
+            for r_id, room in tetris_server.rooms.items()
+        ]
+    rooms_message = {
+        "status": "update",
+        "data": rooms_data
+    }
+
+    logging.info(f"[Lobby] User {username} has ended the game and is now idle.")
 
 
 async def main():
@@ -424,14 +458,16 @@ async def main():
     try:
         db_reader, db_writer = await asyncio.open_connection(config.HOST, config.DB_PORT)
         print("Successfully connected to database server.")
-        logging.info(f"Successfully connected to database server {config.HOST}:{config.DB_PORT}")
+        logging.info(f"[Lobby] Successfully connected to database server {config.HOST}:{config.DB_PORT}")
+    
     except ConnectionRefusedError:
         print("Connection declined, please check if the database server is running.")
-        logging.error("Connection declined, please check if the database server is running.")
+        logging.error("[Lobby] Connection declined, please check if the database server is running.")
         return
+    
     except Exception as e:
         print(f"Unable to connect to database server: {e}")
-        logging.error(f"Unable to connect to database server: {e}")
+        logging.error(f"[Lobby] Unable to connect to database server: {e}")
         return
 
     server_ = await asyncio.start_server(
@@ -439,17 +475,18 @@ async def main():
         config.HOST, config.PORT
     )
     addr = server_.sockets[0].getsockname()
-    logging.info(f"Lobby Server running on {addr}")
+    logging.info(f"[Lobby] Lobby Server running on {addr}")
+    print(f"Lobby Server running on {addr}")
 
     async with server_:
         try:
             await server_.serve_forever()
         except KeyboardInterrupt:
-            logging.info("Received keyboard interrupt, closing server...")
+            logging.info("[Lobby] Received keyboard interrupt, closing server...")
         finally:
             server_.close()
             await server_.wait_closed()
-            logging.info("Server is closed.")
+            logging.info("[Lobby] Server is closed.")
 
 if __name__ == "__main__":
     asyncio.run(main())
