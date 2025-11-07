@@ -6,7 +6,6 @@ import random
 from functools import partial
 
 import utils as ut
-import game
 import config
 import socket
 from config import server_data as server
@@ -105,6 +104,7 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                         room_id = message_json.get("room_id")
                         updated_status = message_json.get("status")
                         print(f"\nRoom {room_id} status updated as {updated_status}")
+
                 elif status == "p2p_info":
                     # p2p info from server; start the peer-to-peer game
                     peer_info["role"] = message_json.get("role")
@@ -125,12 +125,16 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
 
                     asyncio.create_task(initiate_game(game_in_progress, writer, room_id))
                     game_in_progress.value = True
+
                 elif status == "status":
                     print(f"\n{msg}")
+
                 else:
                     print(f"\nServer：{message}")
+
             except json.JSONDecodeError:
                 print(f"\nServer：{message}")
+
         except Exception as e:
             if not game_in_progress.value:
                 print(f"\nError while receiving data from server: {e}")

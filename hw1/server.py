@@ -2,7 +2,6 @@ import asyncio
 import logging
 import json
 import utils as ut
-import game
 import config
 from config import server_data as server
 
@@ -13,7 +12,6 @@ async def handle_create_room(username, writer):
             'creator': username,
             'status': 'waiting',
             'players': [username],
-            'board': game.board()
         }
 
     async with server.online_users_lock:
