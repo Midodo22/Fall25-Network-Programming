@@ -26,6 +26,7 @@ COMMAND_ALIASES = {
     "EXIT": ["EXIT", "exit", "quit", "q"],
     "HELP": ["HELP", "help", "h"],
     "SHOW_STATUS": ["SHOW_STATUS", "status", "s"],
+    "CHECK": ["CHECK", "check"]
 }
 
 COMMANDS = [
@@ -34,6 +35,7 @@ COMMANDS = [
     "logout - Log out",
     "create <Room Type (private or public)> - Create room",
     "invite <Port> <Room ID> - Invite user to join room",
+    "check - Check invites.",
     "exit - Leave client",
     "help - Displays list of available commands",
     "status - Displays current status",
@@ -110,12 +112,6 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                     peer_info["room_id"] = message_json.get("room_id")
                     room_id = peer_info["room_id"]
 
-                    # Initialize local board for this room
-                    if not hasattr(tetris_server, "rooms"):
-                        tetris_server.rooms = {}
-                    if room_id not in tetris_server.rooms:
-                        tetris_server.rooms[room_id] = {"board": game.board()}
-
                     logging.debug(f"Role: {peer_info['role']} waiting for peer: {peer_info['peer_ip']} waiting for port: {peer_info['peer_port']}, self port: {peer_info['own_port']}")
                     print(f"Role: {peer_info['role']} waiting for peer: {peer_info['peer_ip']} waiting for port: {peer_info['peer_port']}, self port: {peer_info['own_port']}")
 
@@ -175,7 +171,7 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 print("Exiting...")
                 logging.info("User chose to leave client.")
                 if logged_in.value:
-                    await ut.send_command(writer, "LOGOUT", [])
+                    await ut.send_command("client", writer, "LOGOUT", [])
                 game_in_progress.value = False
                 try:
                     writer.close()
@@ -197,47 +193,48 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 if len(params) != 2:
                     print("Usage: reg <username> <password>")
                     continue
-                await ut.send_command(writer, "REGISTER", params)
+                await ut.send_command("client", writer, "REGISTER", params)
 
             elif command == "LOGIN":
                 if len(params) != 2:
                     print("Usage: login <username> <password>")
                     continue
                 username = params[0]
-                await ut.send_command(writer, "LOGIN", params)
+                await ut.send_command("client", writer, "LOGIN", params)
 
             elif command == "LOGOUT":
                 if not logged_in.value:
                     print("You aren't logged in.")
                     continue
-                await ut.send_command(writer, "LOGOUT", [])
+                await ut.send_command("client", writer, "LOGOUT", [])
 
             elif command == "CREATE_ROOM":
-                await ut.send_command(writer, "CREATE_ROOM", params)
+                await ut.send_command("client", writer, "CREATE_ROOM", params)
 
             elif command == "INVITE_PLAYER":
                 if len(params) != 2:
                     print("Usage: invite <Port> <Room ID>")
                     continue
-                # await ut.send_command(writer, "INVITE_PLAYER", params)
-                udp_port, room_id = params
-                await send_invite(udp_port, room_id, username)
+                await ut.send_command("client", writer, "INVITE_PLAYER", params)
 
             elif command == "SHOW_STATUS":
-                await ut.send_command(writer, "SHOW_STATUS", [])
+                await ut.send_command("client", writer, "SHOW_STATUS", [])
+                
+            elif command == "CHECK":
+                await ut.send_command("client", writer, "CHECK", [])
 
             elif command == "JOIN_ROOM":
                 if len(params) != 1:
                     print("Usage: join <Room ID>")
                     continue
-                await ut.send_command(writer, "JOIN_ROOM", params)
+                await ut.send_command("client", writer, "JOIN_ROOM", params)
 
             else:
                 print("Invalid command, input 'help' to see list of available commands.")
         except KeyboardInterrupt:
             print("Exiting...")
             logging.info("User chose to leave client via keyboard interrupt.")
-            await ut.send_command(writer, "LOGOUT", [])
+            await ut.send_command("client", writer, "LOGOUT", [])
             game_in_progress.value = False
             writer.close()
             await writer.wait_closed()
@@ -266,7 +263,7 @@ async def initiate_game(game_in_progress, writer, room_id):
 
     finally:
         game_in_progress.value = False
-        await ut.send_command(writer, "GAME_OVER", [])
+        await ut.send_command("client", writer, "GAME_OVER", [])
 
 
 async def start_game_as_host(own_port, room_id):
