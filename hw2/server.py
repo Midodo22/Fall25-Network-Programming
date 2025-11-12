@@ -6,9 +6,8 @@ import config
 from config import tetris_server
 
 
-username = None
 async def handle_client(reader, writer):
-    global username
+    username = None
     addr = writer.get_extra_info('peername')
     print((f"[Lobby] Connection from {addr}"))
     logging.info(f"[Lobby] Connection from {addr}")
@@ -33,17 +32,23 @@ async def handle_client(reader, writer):
         return
 
     # From client to db
+    username = None
     async def handle_client_messages():
+        nonlocal username
         try:
             while True:
                 message = await ut.unpack_message(reader)
                 if message is None:
                     logging.info(f"[Lobby] Client from  {addr} disconnected")
+                    if username:
+                        await ut.send_command("lobby", db_writer, "SERVER_CLOSED", [username])
     
-                    # if username:
-                        # await ut.send_command("lobby", db_writer, "CLIENT_DISCONNECTED", [username])
                     break
-                await process_client_message(message, reader, writer, db_reader, db_writer)
+                
+                if username:
+                    await process_client_message(message, username, reader, writer, db_reader, db_writer)
+                else:
+                    username = await process_client_message(message, username, reader, writer, db_reader, db_writer)
         
         except Exception as e:
             await ut.send_message(writer, ut.build_response("lobby", "error", "Server error"))
@@ -57,7 +62,7 @@ async def handle_client(reader, writer):
                 if not message:
                     logging.info(f"[Lobby] DB connection closed for {addr}")
                     break
-                await process_db_message(message, reader, writer, db_reader, db_writer)
+                await process_db_message(message, username, reader, writer, db_reader, db_writer)
         
         except Exception as e:
             await ut.send_message(writer, ut.build_response("lobby", "error", "Server error"))
@@ -78,9 +83,6 @@ async def handle_client(reader, writer):
             task.cancel()
 
     finally:
-        if username:
-            await ut.send_command("lobby", db_writer, "SERVER_CLOSED", [username])
-        
         try:
             writer.close()
             await writer.wait_closed()
@@ -90,8 +92,7 @@ async def handle_client(reader, writer):
             pass
 
 
-async def process_client_message(message, client_reader, client_writer, db_reader, db_writer):
-    global username
+async def process_client_message(message, username, client_reader, client_writer, db_reader, db_writer):
     try:
         message_json = json.loads(message)
         sender = message_json.get("sender", "")
@@ -105,9 +106,9 @@ async def process_client_message(message, client_reader, client_writer, db_reade
             await handle_register(params, client_writer, db_writer)
 
         elif command == "LOGIN":
-            await handle_login(params, client_writer, db_writer)
+            await handle_login(params, client_reader, client_writer, db_writer)
             if len(params) >= 1:
-                username = params[0]
+                return params[0]
 
         elif command == "LOGOUT":
             if username:
@@ -130,7 +131,7 @@ async def process_client_message(message, client_reader, client_writer, db_reade
 
         elif command == "CHECK":
             if username:
-                await ut.send_command("lobby", db_writer, "CHECK", [])
+                await ut.send_command("lobby", db_writer, "CHECK", [username])
             else:
                 await ut.send_message(client_writer, ut.build_response("lobby", "error", "Not logged in"))
 
@@ -158,8 +159,9 @@ async def process_client_message(message, client_reader, client_writer, db_reade
     except json.JSONDecodeError:
         await ut.send_message(client_writer, ut.build_response("lobby", "error", "Invalid message format"))
 
+    return None
 
-async def process_db_message(message, client_reader, client_writer, db_reader, db_writer):
+async def process_db_message(message, username, client_reader, client_writer, db_reader, db_writer):
     try:
         try:
             message_json = json.loads(message)
@@ -178,6 +180,11 @@ async def process_db_message(message, client_reader, client_writer, db_reader, d
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", "REGISTRATION_SUCCESS"))
 
             elif msg.startswith("LOGIN_SUCCESS"):
+                async with config.target_lock:
+                    config.targets[username] = {
+                        "writer": client_writer,
+                        "reader": client_reader
+                    }
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", "LOGIN_SUCCESS"))
 
             elif msg.startswith("LOGOUT_SUCCESS"):
@@ -187,10 +194,25 @@ async def process_db_message(message, client_reader, client_writer, db_reader, d
                 parts = msg.split()
                 room_id = parts[1]
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", f"CREATE_ROOM_SUCCESS {room_id}"))
+            
             elif msg.startswith("JOIN_ROOM_SUCCESS"):
                 parts = msg.split()
                 room_id = parts[1]
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", "JOIN_ROOM_SUCCESS"))
+
+            elif msg.startswith("INVITE_SENT"):
+                parts = msg.split()
+                target_username = parts[1]
+                room_id = parts[2]
+                target_writer = None
+                
+                try:
+                    target_writer = config.targets[target_username]["writer"]
+                except:
+                    logging.error(f"Target {target_username} not found")
+
+                await ut.send_message(target_writer, ut.build_response("lobby", "invite", f"{username} {room_id}"))
+                await ut.send_message(client_writer, ut.build_response("lobby", "success", f"INVITE_SENT {target_username} {room_id}"))
 
         elif status == "status":
             await ut.send_message(client_writer, ut.build_response("lobby", "status", msg))
@@ -214,7 +236,7 @@ async def process_db_message(message, client_reader, client_writer, db_reader, d
                 print(f"\nRoom {room_id} status updated as {updated_status}")
                 
     except Exception as e:
-        logging.error(f"[Lobby] Error handling DB message: {e}")
+        logging.error(f"[Lobby] Error handling DB message with status {status}: {e}")
 
 
 
@@ -227,10 +249,10 @@ async def handle_register(params, writer, db_writer):
         return
     
     await ut.send_command("lobby", db_writer, "REGISTER", params)
-    logging.info(f"[Lobby] Sent command to register user {username}.")
+    logging.info(f"[Lobby] Sent command to register user {params[0]}.")
 
 
-async def handle_login(params, writer, db_writer):
+async def handle_login(params, reader, writer, db_writer):
     if len(params) != 2:
         await ut.send_message(writer, ut.build_response("lobby", "error", "Invalid REGISTER command"))
         return
@@ -267,41 +289,7 @@ async def handle_invite_player(params, username, writer, db_writer):
     if len(params) != 2:
         await ut.send_message(writer, ut.build_response("lobby", "error", "Invalid INVITE_PLAYER command"))
         return
-    target_username, room_id = params
-    async with tetris_server.rooms_lock:
-        if room_id not in tetris_server.rooms:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Room does not exist"))
-            return
-        room = tetris_server.rooms[room_id]
-        if room['creator'] != username:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Only room creator can invite players"))
-            return
-        if len(room['players']) >= 2:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Room is full"))
-            return
-    async with tetris_server.online_users_lock:
-        if target_username not in tetris_server.online_users:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Target user not online"))
-            return
-        target_info = tetris_server.online_users[target_username]
-        if target_info["status"] != "idle":
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Target user is not idle"))
-            return
-        target_writer = target_info["writer"]
-    try:
-        invite_message = {
-            "status": "invite",
-            "from": username,
-            "room_id": room_id
-        }
-        await ut.send_message(target_writer, json.dumps(invite_message) + '\n')
-        await ut.send_message(writer, ut.build_response("lobby", "success", f"INVITE_SENT {target_username} {room_id}"))
-        logging.info(f"User {username} invited {target_username} to join room: {room_id}")
-    except Exception as e:
-        logging.error(f"Failed to send invite to {target_username}: {e}")
-        await ut.send_message(writer, ut.build_response("lobby", "error", "Failed to send invite"))
     
-    # to db server
     params.append(username)
     await ut.send_command("lobby", db_writer, "INVITE_PLAYER", params)
 

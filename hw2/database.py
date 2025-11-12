@@ -41,6 +41,7 @@ async def handle_client(reader, writer):
                 await db_logout(params, writer)
 
             elif command == "CREATE_ROOM":
+                logging.info("[DB] Received command to create room")
                 await db_create_room(params, writer)
 
             elif command == "INVITE_PLAYER":
@@ -60,7 +61,7 @@ async def handle_client(reader, writer):
                 await db_show_status(writer)
 
             elif command == "CHECK":
-                await db_show_invites(writer)
+                await db_show_invites(writer, params)
 
             elif command == "SERVER_CLOSED":
                 await db_close_server(params)
@@ -141,7 +142,7 @@ async def db_login(params, writer):
                             with open(config.DB_FILE, 'r') as f:
                                 data = json.load(f)
                             
-                            data["online_users"] = tetris_server.rooms
+                            data["online_users"] = tetris_server.online_users
                             
                             with open(config.DB_FILE, 'w') as f:
                                 json.dump(data, f, indent=4)
@@ -162,7 +163,7 @@ async def db_logout(username, writer):
                     with open(config.DB_FILE, 'r') as f:
                         data = json.load(f)
                     
-                    data["online_users"] = tetris_server.rooms
+                    data["online_users"] = tetris_server.online_users
                     
                     with open(config.DB_FILE, 'w') as f:
                         json.dump(data, f, indent=4)
@@ -204,7 +205,7 @@ async def db_create_room(params, writer):
     username, room_type = params
     
     # Update server
-    async with tetris_server.rooms_lock, tetris_server.db_lock:
+    async with tetris_server.rooms_lock:
         tetris_server.rooms[room_id] = {
             'creator': username,
             'players': [username],
@@ -215,15 +216,16 @@ async def db_create_room(params, writer):
                 "winner": "None"
             }
         }
-        
-        # Update database
-        with open(config.DB_FILE, 'r') as f:
-            data = json.load(f)
-        
-        data["rooms"] = tetris_server.rooms
-        
-        with open(config.DB_FILE, 'w') as f:
-            json.dump(data, f, indent=4)
+
+        async with tetris_server.db_lock:
+            # Update database
+            with open(config.DB_FILE, 'r') as f:
+                data = json.load(f)
+            
+            data["rooms"] = tetris_server.rooms
+            
+            with open(config.DB_FILE, 'w') as f:
+                json.dump(data, f, indent=4)
 
     async with tetris_server.online_users_lock:
         if username in tetris_server.online_users:
@@ -271,7 +273,7 @@ async def db_join_room(params, writer):
         if username in tetris_server.online_users:
             tetris_server.online_users[username]["status"] = "in_room"
 
-    await ut.send_message(writer, ut.build_response("lobby", "success", f"JOIN_ROOM_SUCCESS {room_id}"))
+    await ut.send_message(writer, ut.build_response("database", "success", f"JOIN_ROOM_SUCCESS {room_id}"))
 
     if len(room['players']) == 2:
         async with tetris_server.rooms_lock:
@@ -327,10 +329,42 @@ async def db_join_room(params, writer):
 
 async def db_invite_player(params, writer):
     target_username, room_id, inviter = params
+    async with tetris_server.rooms_lock:
+        if room_id not in tetris_server.rooms:
+            await ut.send_message(writer, ut.build_response("database", "error", "Room does not exist"))
+            return
+        room = tetris_server.rooms[room_id]
+        if room['creator'] != inviter:
+            print(inviter)
+            await ut.send_message(writer, ut.build_response("database", "error", "Only room creator can invite players"))
+            return
+        if len(room['players']) >= 2:
+            await ut.send_message(writer, ut.build_response("database", "error", "Room is full"))
+            return
+
+    async with tetris_server.online_users_lock:
+        if target_username not in tetris_server.online_users:
+            await ut.send_message(writer, ut.build_response("database", "error", "Target user not online"))
+            return
+        target_info = tetris_server.online_users[target_username]
+        
+        if target_info["status"] != "idle":
+            await ut.send_message(writer, ut.build_response("database", "error", "Target user is not idle"))
+            return
+        
+    try:
+        # send invite
+        await ut.send_message(writer, ut.build_response("database", "success", f"INVITE_SENT {target_username} {room_id}"))
+        logging.info(f"User {inviter} invited {target_username} to join room: {room_id}")
+    except Exception as e:
+        logging.error(f"Failed to send invite to {target_username}: {e}")
+        await ut.send_message(writer, ut.build_response("database", "error", "Failed to send invite"))
+    
     invite_info = {
         "inviter": inviter, 
         "room_id": room_id
     }
+    
     async with tetris_server.online_users_lock:
         tetris_server.online_users[target_username]["invites"].append(invite_info)
         async with tetris_server.db_lock:
@@ -395,16 +429,16 @@ async def db_show_status(writer):
         await ut.send_message(writer, ut.build_response("database", "error", "Failed to retrieve status"))
 
 
-async def db_show_invites(writer):
-    try:
-        async with tetris_server.online_users_lock:
-            invites = [
-                {"inviter": tetris_server.rooms[info]["inviter"], "room_id": tetris_server.rooms[info]["room_id"]}
-                for info in tetris_server.rooms
-            ]
+async def db_show_invites(writer, params):
+    username = params[0]
+    invites = None
+    async with tetris_server.online_users_lock:
+        invites = tetris_server.online_users[username]["invites"]
 
+    try:
+            
         status_message = "------ List of Invites ------\n"
-        if not invites:
+        if invites == None:
             status_message += "There are no invites available :(\n"
         else:
             for inv in invites:
@@ -423,7 +457,6 @@ async def db_show_invites(writer):
     except Exception as e:
         logging.error(f"[DB] Error while processing CHECK: {e}")
         await ut.send_message(writer, ut.build_response("database", "error", "Failed to retrieve status"))
-
 
 
 async def db_close_server(params):

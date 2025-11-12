@@ -26,7 +26,9 @@ COMMAND_ALIASES = {
     "EXIT": ["EXIT", "exit", "quit", "q"],
     "HELP": ["HELP", "help", "h"],
     "SHOW_STATUS": ["SHOW_STATUS", "status", "s"],
-    "CHECK": ["CHECK", "check"]
+    "CHECK": ["CHECK", "check"],
+    "ACCEPT": ["ACCEPT", "accept"],
+    "DECLINE": ["DECLINE", "decline"]
 }
 
 COMMANDS = [
@@ -36,6 +38,8 @@ COMMANDS = [
     "create <Room Type (private or public)> - Create room",
     "invite <Port> <Room ID> - Invite user to join room",
     "check - Check invites.",
+    "accept <Username> <Room ID> - Accept invite from <Username> to join room <Room ID>",
+    "decline <Username> <Room ID> - Decline invite from <Username> to join room <Room ID>",
     "exit - Leave client",
     "help - Displays list of available commands",
     "status - Displays current status",
@@ -70,23 +74,40 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                 if status == "success":
                     if msg.startswith("REGISTRATION_SUCCESS"):
                         print("\nRegistration successful, please log in.\n")
+                    
                     elif msg.startswith("LOGIN_SUCCESS"):
                         print("\nYou have logged in successfully.\n")
                         logged_in.value = True
+                    
                     elif msg.startswith("LOGOUT_SUCCESS"):
                         print("\nYou have logged out successfully.")
                         logged_in.value = False
+                    
                     elif msg.startswith("CREATE_ROOM_SUCCESS"):
                         parts = msg.split()
                         room_id = parts[1]
                         print(f"\nRoom successfully created. The room ID is {room_id}.\n")
+                    
                     elif msg.startswith("JOIN_ROOM_SUCCESS"):
                         parts = msg.split()
                         room_id = parts[1]
                         print(f"\nSuccessfully joined room {room_id}.\n")
+                        
+                    elif msg.startswith("INVITE_SENT"):
+                        parts = msg.split()
+                        target_username = parts[1]
+                        print(f"\nYour invite for {target_username} has been sent.")
 
                 elif status == "error":
                     print(f"\nError: {msg}\n")
+                    
+                elif status == "invite":
+                    parts = msg.split()
+                    inviter = parts[0]
+                    room_id = parts[1]
+                    print(f"You have been invited by {inviter} to join room {room_id}.")
+                    print("Use the command \"accept <username> <room_id>\" to accept the invite, or use \"check\" to check your invites.")
+                
                 elif status == "invite_declined":
                     sender = message_json.get("from")
                     room_id = message_json.get("room_id")
@@ -209,6 +230,9 @@ async def handle_user_input(writer, game_in_progress, logged_in):
                 await ut.send_command("client", writer, "LOGOUT", [])
 
             elif command == "CREATE_ROOM":
+                if len(params) != 1:
+                    print("Usage: create <Room Type [public, private]>")
+                    continue
                 await ut.send_command("client", writer, "CREATE_ROOM", params)
 
             elif command == "INVITE_PLAYER":
