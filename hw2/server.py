@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import json
+import contextlib
 import utils as ut
 import config
 from config import tetris_server
+import game
 
 
 async def handle_client(reader, writer):
@@ -129,6 +131,18 @@ async def process_client_message(message, username, client_reader, client_writer
             else:
                 await ut.send_message(client_writer, ut.build_response("lobby", "error", "Not logged in"))
 
+        elif command == "ACCEPT":
+            if username:
+                await handle_accept_invite(params, username, client_writer, db_writer)
+            else:
+                await ut.send_message(client_writer, ut.build_response("lobby", "error", "Not logged in"))
+
+        elif command == "DECLINE":
+            if username:
+                await handle_decline_invite(params, username, client_writer, db_writer)
+            else:
+                await ut.send_message(client_writer, ut.build_response("lobby", "error", "Not logged in"))
+
         elif command == "CHECK":
             if username:
                 await ut.send_command("lobby", db_writer, "CHECK", [username])
@@ -143,7 +157,7 @@ async def process_client_message(message, username, client_reader, client_writer
         
         elif command == "SHOW_STATUS":
             if username:
-                await ut.send_command("lobby", db_writer, "SHOW_STATUS", [])
+                await ut.send_command("lobby", db_writer, "SHOW_STATUS", [username])
             else:
                 await ut.send_message(client_writer, ut.build_response("lobby", "error", "Not logged in"))
         
@@ -185,20 +199,56 @@ async def process_db_message(message, username, client_reader, client_writer, db
                         "writer": client_writer,
                         "reader": client_reader
                     }
+                client_ip, client_port = client_writer.get_extra_info('peername')
+                async with tetris_server.online_users_lock:
+                    tetris_server.online_users[username] = {
+                        "status": "idle",
+                        "ip": client_ip,
+                        "port": client_port
+                    }
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", "LOGIN_SUCCESS"))
 
             elif msg.startswith("LOGOUT_SUCCESS"):
+                async with tetris_server.online_users_lock:
+                    if username in tetris_server.online_users:
+                        del tetris_server.online_users[username]
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", "LOGOUT_SUCCESS"))
 
             elif msg.startswith("CREATE_ROOM_SUCCESS"):
                 parts = msg.split()
                 room_id = parts[1]
+                params_list = message_json.get("params", [])
+                room_type = params_list[1] if len(params_list) >= 2 else "public"
+                async with tetris_server.rooms_lock:
+                    tetris_server.rooms[room_id] = {
+                        "creator": username,
+                        "players": [username],
+                        "type": room_type,
+                        "status": "Waiting"
+                    }
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", f"CREATE_ROOM_SUCCESS {room_id}"))
             
             elif msg.startswith("JOIN_ROOM_SUCCESS"):
                 parts = msg.split()
                 room_id = parts[1]
-                await ut.send_message(client_writer, ut.build_response("lobby", "success", "JOIN_ROOM_SUCCESS"))
+                params_list = message_json.get("params", [])
+                players = params_list[1] if len(params_list) >= 2 else []
+                room_type = params_list[2] if len(params_list) >= 3 else "public"
+                async with tetris_server.rooms_lock:
+                    room_entry = tetris_server.rooms.get(room_id, {
+                        "creator": players[0] if players else username,
+                        "players": [],
+                        "type": room_type,
+                        "status": "Waiting"
+                    })
+                    if players:
+                        room_entry["players"] = players
+                        room_entry["creator"] = players[0]
+                    room_entry["type"] = room_type
+                    room_entry["status"] = "Ready"
+                    tetris_server.rooms[room_id] = room_entry
+                await ut.send_message(client_writer, ut.build_response("lobby", "success", f"JOIN_ROOM_SUCCESS {room_id}"))
+                await send_p2p_info(params_list if params_list else [room_id], username, client_writer)
 
             elif msg.startswith("INVITE_SENT"):
                 parts = msg.split()
@@ -213,6 +263,20 @@ async def process_db_message(message, username, client_reader, client_writer, db
 
                 await ut.send_message(target_writer, ut.build_response("lobby", "invite", f"{username} {room_id}"))
                 await ut.send_message(client_writer, ut.build_response("lobby", "success", f"INVITE_SENT {target_username} {room_id}"))
+            
+            elif msg.startswith("DECLINED_INVITE"):
+                parts = msg.split()
+                target_username = parts[1]
+                room_id = parts[2]
+                target_writer = None
+                
+                try:
+                    target_writer = config.targets[target_username]["writer"]
+                except:
+                    logging.error(f"Decline target {target_username} not found")
+
+                await ut.send_message(target_writer, ut.build_response("lobby", "invite_declined", f"{username} {room_id}"))
+                await ut.send_message(client_writer, ut.build_response("lobby", "success", f"DECLINED_INVITE {target_username} {room_id}"))
 
         elif status == "status":
             await ut.send_message(client_writer, ut.build_response("lobby", "status", msg))
@@ -254,7 +318,7 @@ async def handle_register(params, writer, db_writer):
 
 async def handle_login(params, reader, writer, db_writer):
     if len(params) != 2:
-        await ut.send_message(writer, ut.build_response("lobby", "error", "Invalid REGISTER command"))
+        await ut.send_message(writer, ut.build_response("lobby", "error", "Invalid LOGIN command"))
         return
     
     client_ip, client_port = writer.get_extra_info('peername')
@@ -294,90 +358,120 @@ async def handle_invite_player(params, username, writer, db_writer):
     await ut.send_command("lobby", db_writer, "INVITE_PLAYER", params)
 
 
-async def handle_accept_invite(params, username, writer):
-    if len(params) != 1:
+async def handle_accept_invite(params, username, writer, db_writer):
+    if len(params) != 2:
         await ut.send_message(writer, ut.build_response("lobby", "error", "Invalid ACCEPT_INVITE command"))
         return
+    params.append(username)
+    await ut.send_command("lobby", db_writer, "ACCEPT", params)
+
+
+async def send_p2p_info(params, username, writer):
+    if not params:
+        logging.error("[Lobby] Missing room info for P2P setup")
+        return
+
     room_id = params[0]
+    players = params[1] if len(params) >= 2 and isinstance(params[1], list) else []
+    room_visibility = params[2] if len(params) >= 3 else "public"
+    if len(players) < 2:
+        logging.info(f"[Lobby] Room {room_id} does not have enough players yet")
+        return
+
     async with tetris_server.rooms_lock:
-        if room_id not in tetris_server.rooms:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Room does not exist"))
-            return
-        room = tetris_server.rooms[room_id]
-        if room['status'] == 'In Game':
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Room is already in game"))
-            return
-        if len(room['players']) >= 2:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Room is full"))
-            return
-        if room['type'] != 'private':
-            await ut.send_message(writer, ut.build_response("lobby", "error", "Cannot accept invite to a public room"))
-            return
-        if username in room['players']:
-            await ut.send_message(writer, ut.build_response("lobby", "error", "You are already in the room"))
-            return
-        room['players'].append(username)
+        room_entry = tetris_server.rooms.get(room_id, {})
+        room_entry["players"] = players
+        room_entry["creator"] = players[0]
+        room_entry["status"] = "In Game"
+        room_entry["type"] = room_visibility
+        tetris_server.rooms[room_id] = room_entry
 
     async with tetris_server.online_users_lock:
-        if username in tetris_server.online_users:
-            tetris_server.online_users[username]["status"] = "in_room"
-    await ut.send_message(writer, ut.build_response("lobby", "success", f"JOIN_ROOM_SUCCESS {room_id} {room['game_type']}"))
-    
-    if len(room['players']) == 2:
-        async with tetris_server.rooms_lock:
-            room['status'] = 'In Game'
-            game_type = room['game_type']
-            creator = room["players"][0]
-            joiner = username
-            async with tetris_server.online_users_lock:
-                for player in room['players']:
-                    if player in tetris_server.online_users:
-                        tetris_server.online_users[player]["status"] = "in_game"
+        for player in players:
+            if player in tetris_server.online_users:
+                tetris_server.online_users[player]["status"] = "in_game"
 
-                creator_info = tetris_server.online_users[creator]
-                joiner_info = tetris_server.online_users[joiner]
-                creator_port = ut.get_port()
-                joiner_port = ut.get_port()
-                creator_message = {
-                    "status": "p2p_info",
-                    "role": "host",
-                    "peer_ip": joiner_info["ip"],
-                    "peer_port": joiner_port,
-                    "own_port": creator_port,
-                    "game_type": game_type
-                }
-                joiner_message = {
-                    "status": "p2p_info",
-                    "role": "client",
-                    "peer_ip": creator_info["ip"],
-                    "peer_port": creator_port,
-                    "own_port": joiner_port,
-                    "game_type": game_type
-                }
-                await ut.send_message(creator_info["writer"], json.dumps(creator_message) + '\n')
-                await ut.send_message(joiner_info["writer"], json.dumps(joiner_message) + '\n')
-            logging.info(f"Game server info sent to players in room: {room_id}")
+    port = await launch_game_instance(room_id)
+    if not port:
+        logging.error(f"[Lobby] Failed to start game server for room {room_id}")
+        error_msg = ut.build_response("lobby", "error", "Unable to start game server")
+        for player in players:
+            target = config.targets.get(player)
+            if target and target.get("writer"):
+                await ut.send_message(target["writer"], error_msg)
+        return
 
-    logging.info(f"User {username} accepted invite to join room: {room_id}")
+    game_host = config.GAME_HOST
+    for idx, player in enumerate(players):
+        target = config.targets.get(player)
+        if not target or not target.get("writer"):
+            logging.error(f"[Lobby] Missing lobby connection for player {player}")
+            continue
+        role = f"P{idx + 1}"
+        message = {
+            "status": "p2p_info",
+            "role": role,
+            "room_id": room_id,
+            "game_type": "tetris",
+            "game_host": game_host,
+            "game_port": port
+        }
+        await ut.send_message(target["writer"], message)
+    logging.info(f"[Lobby] Central game server info sent for room {room_id}")
 
-async def handle_decline_invite(params, username, writer):
+
+async def launch_game_instance(room_id):
+    async with tetris_server.game_servers_lock:
+        if room_id in tetris_server.game_servers:
+            return tetris_server.game_servers[room_id]["port"]
+    result = await game.start_game_server(room_id, host_bind="0.0.0.0")
+    if not result:
+        return None
+    server_obj, port, tick_task, game_ctx = result
+
+    async def _run():
+        async with server_obj:
+            await server_obj.serve_forever()
+
+    task = asyncio.create_task(_run())
+    async with tetris_server.game_servers_lock:
+        tetris_server.game_servers[room_id] = {
+            "server": server_obj,
+            "task": task,
+            "port": port,
+            "tick_task": tick_task,
+            "ctx": game_ctx
+        }
+    logging.info(f"[Lobby] Started game server for room {room_id} on port {port}")
+    return port
+
+
+async def stop_game_instance(room_id):
+    async with tetris_server.game_servers_lock:
+        info = tetris_server.game_servers.pop(room_id, None)
+    if not info:
+        return
+    server_obj = info["server"]
+    task = info["task"]
+    tick_task = info.get("tick_task")
+    server_obj.close()
+    await server_obj.wait_closed()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    if tick_task:
+        tick_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tick_task
+    logging.info(f"[Lobby] Stopped game server for room {room_id}")
+
+async def handle_decline_invite(params, username, writer, db_writer):
     if len(params) != 2:
         await ut.send_message(writer, ut.build_response("lobby", "error", "Invalid DECLINE_INVITE command"))
         return
-    inviter_username, room_id = params
-    # Notify the inviter that the invite was declined
-    async with tetris_server.online_users_lock:
-        if inviter_username in tetris_server.online_users:
-            inviter_info = tetris_server.online_users[inviter_username]
-            inviter_writer = inviter_info["writer"]
-            decline_message = {
-                "status": "invite_declined",
-                "from": username,
-                "room_id": room_id
-            }
-            await ut.send_message(inviter_writer, json.dumps(decline_message) + '\n')
-            logging.info(f"User {username} declined invitation from {inviter_username} to room: {room_id}")
-    await ut.send_message(writer, ut.build_response("lobby", "success", f"DECLINE_INVITE_SUCCESS {room_id}"))
+    
+    params.append(username)
+    await ut.send_command("lobby", db_writer, "DECLINE", params)
 
 
 async def handle_join_room(params, username, writer, db_writer):
@@ -396,9 +490,11 @@ async def handle_game_over(username):
             tetris_server.online_users[username]["status"] = "idle"
 
     room_to_delete = None
+    target_room = None
     async with tetris_server.rooms_lock:
         for room_id, room in list(tetris_server.rooms.items()):
             if username in room["players"]:
+                target_room = room_id
                 room["players"].remove(username)
                 if len(room["players"]) == 0:
                     room_to_delete = room_id
@@ -408,6 +504,8 @@ async def handle_game_over(username):
                 break
         if room_to_delete:
             del tetris_server.rooms[room_to_delete]
+    if target_room:
+        await stop_game_instance(target_room)
 
     async with tetris_server.online_users_lock:
         users_data = [

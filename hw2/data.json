@@ -1,0 +1,29 @@
+{
+    "users": {
+        "admin": {
+            "id": 0,
+            "password": "1234"
+        },
+        "mido": {
+            "password": "785f3ec7eb32f30b90cd0fcf3657d388b5ff4297f2f9716ff66e9b69c05ddd09"
+        },
+        "pho": {
+            "password": "4fc82b26aecb47d2868c4efbe3581732a3e7cbcc6c2efb32062c08170a05eeb8"
+        }
+    },
+    "online_users": {},
+    "rooms": {
+        "template_id": {
+            "creator": "admin",
+            "players": [
+                "admin"
+            ],
+            "type": "private",
+            "status": "waiting",
+            "game_results": {
+                "score": 0,
+                "winner": "None"
+            }
+        }
+    }
+}
