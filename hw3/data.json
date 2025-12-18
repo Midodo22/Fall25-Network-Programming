@@ -1,0 +1,23 @@
+{
+    "users": {
+        "mido": {
+            "password": "785f3ec7eb32f30b90cd0fcf3657d388b5ff4297f2f9716ff66e9b69c05ddd09"
+        },
+        "pho": {
+            "password": "4fc82b26aecb47d2868c4efbe3581732a3e7cbcc6c2efb32062c08170a05eeb8"
+        }
+    },
+    "online_users": {},
+    "rooms": {},
+    "game_devs": {
+        "dev1": {
+            "password": "f6e0a1e2ac41945a9aa7ff8a8aaa0cebc12a3bcc981a929ad5cf810a090e11ae"
+        },
+        "dev2": {
+            "password": "9b871512327c09ce91dd649b3f96a63b7408ef267c8cc5710114e629730cb61f"
+        }
+    },
+    "game_dev_online_users": {},
+    "game_dev_rooms": {},
+    "game_reviews": {}
+}
