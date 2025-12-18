@@ -1,0 +1,164 @@
+2025/12/15 15:33:29 [INFO] [DB] Database Server running on ('172.31.158.104', 52274)
+2025/12/15 15:33:34 [INFO] [Lobby] Lobby Server running on ('172.31.158.104', 52273)
+2025/12/15 15:33:39 [INFO] [Lobby] Connection from ('172.31.158.104', 43036)
+2025/12/15 15:33:39 [INFO] Successfully connected to lobby server 172.31.158.104:52273
+2025/12/15 15:33:39 [INFO] [Lobby] Successfully connected to database server 172.31.158.104:52274
+2025/12/15 15:33:39 [INFO] [DB] Connection from ('172.31.158.104', 35646)
+2025/12/15 15:33:43 [INFO] Sent command: LOGIN mido 22
+2025/12/15 15:33:43 [INFO] Sent command: LOGIN mido 22 172.31.158.104 43036
+2025/12/15 15:33:43 [INFO] [Lobby] Sent command to login user mido.
+2025/12/15 15:33:43 [INFO] [DB] Received command to login user
+2025/12/15 15:33:43 [INFO] [DB] Login acquired online_users_lock
+2025/12/15 15:33:43 [INFO] [DB] Login released online_users_lock
+2025/12/15 15:33:43 [INFO] Sent message: {"sender": "database", "status": "success", "message": "LOGIN_SUCCESS", "params": []}
+
+2025/12/15 15:33:43 [INFO] User mido logged in successfully.
+2025/12/15 15:33:43 [INFO] Sent message: {"sender": "lobby", "status": "success", "message": "LOGIN_SUCCESS", "params": []}
+
+2025/12/15 15:33:46 [INFO] Sent command: CREATE_ROOM public
+2025/12/15 15:33:46 [INFO] Sent command: CREATE_ROOM mido public
+2025/12/15 15:33:46 [INFO] [DB] Received command to create room
+2025/12/15 15:33:46 [INFO] [DB] Create room acquired online_users_lock
+2025/12/15 15:33:46 [INFO] [DB] Create room released online_users_lock
+2025/12/15 15:33:46 [INFO] Sent message: {"sender": "database", "status": "success", "message": "CREATE_ROOM_SUCCESS 280251", "params": ["280251", "public"]}
+
+2025/12/15 15:33:46 [INFO] [DB] User mido created room 280251
+2025/12/15 15:33:46 [INFO] [DB] Waiting for another player to join room 280251
+2025/12/15 15:33:46 [INFO] Sent message: {"sender": "lobby", "status": "success", "message": "CREATE_ROOM_SUCCESS 280251", "params": []}
+
+2025/12/15 15:33:49 [INFO] [Lobby] Connection from ('172.31.158.104', 51152)
+2025/12/15 15:33:49 [INFO] Successfully connected to lobby server 172.31.158.104:52273
+2025/12/15 15:33:49 [INFO] [Lobby] Successfully connected to database server 172.31.158.104:52274
+2025/12/15 15:33:49 [INFO] [DB] Connection from ('172.31.158.104', 47576)
+2025/12/15 15:33:52 [INFO] Sent command: LOGIN pho 11
+2025/12/15 15:33:52 [INFO] Sent command: LOGIN pho 11 172.31.158.104 51152
+2025/12/15 15:33:52 [INFO] [Lobby] Sent command to login user pho.
+2025/12/15 15:33:52 [INFO] [DB] Received command to login user
+2025/12/15 15:33:52 [INFO] [DB] Login acquired online_users_lock
+2025/12/15 15:33:52 [INFO] [DB] Login released online_users_lock
+2025/12/15 15:33:52 [INFO] Sent message: {"sender": "database", "status": "success", "message": "LOGIN_SUCCESS", "params": []}
+
+2025/12/15 15:33:52 [INFO] User pho logged in successfully.
+2025/12/15 15:33:52 [INFO] Sent message: {"sender": "lobby", "status": "success", "message": "LOGIN_SUCCESS", "params": []}
+
+2025/12/15 15:33:57 [INFO] Sent command: JOIN_ROOM 280251
+2025/12/15 15:33:57 [INFO] Sent command: JOIN_ROOM 280251 pho
+2025/12/15 15:33:57 [INFO] [DB] Join room released online_users_lock
+2025/12/15 15:33:57 [INFO] Sent message: {"sender": "database", "status": "success", "message": "JOIN_ROOM_SUCCESS 280251", "params": ["280251", ["mido", "pho"], "public"]}
+
+2025/12/15 15:33:57 [INFO] [DB] User pho has joined room 280251
+2025/12/15 15:33:57 [INFO] Sent message: {"sender": "lobby", "status": "success", "message": "JOIN_ROOM_SUCCESS 280251", "params": []}
+
+2025/12/15 15:33:57 [INFO] [Game] Game server started for room 280251 on port 52285
+2025/12/15 15:33:57 [INFO] [Lobby] Started game server for room 280251 on port 52285
+2025/12/15 15:33:57 [INFO] Sent message: {"status": "p2p_info", "role": "P1", "room_id": "280251", "game_type": "tetris", "game_host": "172.31.158.104", "game_port": 52285}
+2025/12/15 15:33:57 [INFO] Sent message: {"status": "p2p_info", "role": "P2", "room_id": "280251", "game_type": "tetris", "game_host": "172.31.158.104", "game_port": 52285}
+2025/12/15 15:33:57 [INFO] [Lobby] Central game server info sent for room 280251
+2025/12/15 15:33:57 [INFO] Connecting to central game server 172.31.158.104:52285 for room 280251
+2025/12/15 15:33:57 [INFO] Connecting to central game server 172.31.158.104:52285 for room 280251
+2025/12/15 15:33:57 [INFO] Initiating game for room 280251...
+2025/12/15 15:33:57 [INFO] Connecting to game server at 172.31.158.104:52285... [Attempt 1]
+2025/12/15 15:33:57 [INFO] Initiating game for room 280251...
+2025/12/15 15:33:57 [INFO] Connecting to game server at 172.31.158.104:52285... [Attempt 1]
+2025/12/15 15:33:57 [INFO] Connected to game server at 172.31.158.104:52285
+2025/12/15 15:33:57 [INFO] Sent message: {"type": "JOIN", "username": "pho"}
+2025/12/15 15:33:57 [INFO] Sent JOIN message with username: pho
+2025/12/15 15:33:57 [INFO] [Game] Player pho (P1_280251) connected from ('172.31.158.104', 47166)
+2025/12/15 15:33:57 [INFO] Connected to game server at 172.31.158.104:52285
+2025/12/15 15:33:57 [INFO] Sent message: {"type": "JOIN", "username": "mido"}
+2025/12/15 15:33:57 [INFO] Sent JOIN message with username: mido
+2025/12/15 15:33:57 [INFO] [Game] Player mido (P2_280251) connected from ('172.31.158.104', 47172)
+2025/12/15 15:33:57 [INFO] Sent message: {"type": "WELCOME", "role": "P2", "seed": 568895, "bagRule": "7bag", "gravityPlan": {"mode": "timed_step", "dropMs": 500, "stepMs": 450, "intervalMs": 60000}}
+2025/12/15 15:33:57 [INFO] [Game] Sent WELCOME to mido
+2025/12/15 15:33:57 [INFO] Received WELCOME - Role: P2, Seed: 568895
+2025/12/15 15:33:57 [INFO] Sent message: {"type": "READY", "username": "mido"}
+2025/12/15 15:33:57 [INFO] Sent READY signal to game server
+2025/12/15 15:33:57 [INFO] [Game] Player mido ready (1/2)
+2025/12/15 15:33:58 [INFO] Sent message: {"type": "WELCOME", "role": "P1", "seed": 568895, "bagRule": "7bag", "gravityPlan": {"mode": "timed_step", "dropMs": 500, "stepMs": 450, "intervalMs": 60000}}
+2025/12/15 15:33:58 [INFO] [Game] Sent WELCOME to pho
+2025/12/15 15:33:58 [INFO] Received WELCOME - Role: P1, Seed: 568895
+2025/12/15 15:33:58 [INFO] Sent message: {"type": "READY", "username": "pho"}
+2025/12/15 15:33:58 [INFO] Sent READY signal to game server
+2025/12/15 15:33:58 [INFO] [Game] Player pho ready (2/2)
+2025/12/15 15:33:58 [INFO] [Game] Room 280251 game starting
+2025/12/15 15:34:04 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:04 [INFO] Disconnected from game server
+2025/12/15 15:34:04 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:04 [INFO] Sent command: GAME_OVER 
+2025/12/15 15:34:04 [INFO] [Lobby] Stopped game server for room 280251
+2025/12/15 15:34:04 [INFO] [Lobby] User mido has ended the game and is now idle.
+2025/12/15 15:34:04 [ERROR] Task exception was never retrieved
+future: <Task finished name='Task-4' coro=<initiate_game() done, defined at /home/midor/114Fall/hw2/client.py:617> exception=KeyboardInterrupt()>
+Traceback (most recent call last):
+  File "/home/midor/114Fall/hw2/client.py", line 1234, in <module>
+    asyncio.run(main())
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 636, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 603, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 1909, in _run_once
+    handle._run()
+  File "/usr/lib/python3.10/asyncio/events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "/home/midor/114Fall/hw2/client.py", line 620, in initiate_game
+    await start_game_session(peer_info.get("game_host"), peer_info.get("game_port"), room_id, mode="player")
+  File "/home/midor/114Fall/hw2/client.py", line 646, in start_game_session
+    success = await connect_with_retries(candidate, game_port, max_retries, retry_delay, room_id, mode)
+  File "/home/midor/114Fall/hw2/client.py", line 662, in connect_with_retries
+    await connect_to_game_server(host, port, username, room_id, mode)
+  File "/home/midor/114Fall/hw2/client.py", line 737, in connect_to_game_server
+    await game_loop(reader, writer, username, mode=mode)
+  File "/home/midor/114Fall/hw2/client.py", line 981, in game_loop
+    clock.tick(60)
+KeyboardInterrupt
+2025/12/15 15:34:04 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:04 [INFO] [Lobby] Client from  ('172.31.158.104', 43036) disconnected
+2025/12/15 15:34:04 [INFO] Sent command: SERVER_CLOSED mido
+2025/12/15 15:34:04 [INFO] [DB] Close server released online_users_lock
+2025/12/15 15:34:04 [INFO] [DB] Successfully disconnected client mido
+2025/12/15 15:34:04 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:04 [INFO] [DB] Connection closed by ('172.31.158.104', 35646)
+2025/12/15 15:34:08 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:08 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:08 [INFO] Disconnected from game server
+2025/12/15 15:34:08 [INFO] Sent command: GAME_OVER 
+2025/12/15 15:34:08 [INFO] [Lobby] User pho has ended the game and is now idle.
+2025/12/15 15:34:09 [ERROR] Task exception was never retrieved
+future: <Task finished name='Task-4' coro=<initiate_game() done, defined at /home/midor/114Fall/hw2/client.py:617> exception=KeyboardInterrupt()>
+Traceback (most recent call last):
+  File "/home/midor/114Fall/hw2/client.py", line 1234, in <module>
+    asyncio.run(main())
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 636, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 603, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 1909, in _run_once
+    handle._run()
+  File "/usr/lib/python3.10/asyncio/events.py", line 80, in _run
+    self._context.run(self._callback, *self._args)
+  File "/home/midor/114Fall/hw2/client.py", line 620, in initiate_game
+    await start_game_session(peer_info.get("game_host"), peer_info.get("game_port"), room_id, mode="player")
+  File "/home/midor/114Fall/hw2/client.py", line 646, in start_game_session
+    success = await connect_with_retries(candidate, game_port, max_retries, retry_delay, room_id, mode)
+  File "/home/midor/114Fall/hw2/client.py", line 662, in connect_with_retries
+    await connect_to_game_server(host, port, username, room_id, mode)
+  File "/home/midor/114Fall/hw2/client.py", line 737, in connect_to_game_server
+    await game_loop(reader, writer, username, mode=mode)
+  File "/home/midor/114Fall/hw2/client.py", line 981, in game_loop
+    clock.tick(60)
+KeyboardInterrupt
+2025/12/15 15:34:09 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:09 [INFO] [Lobby] Client from  ('172.31.158.104', 51152) disconnected
+2025/12/15 15:34:09 [INFO] Sent command: SERVER_CLOSED pho
+2025/12/15 15:34:09 [INFO] [DB] Close server released online_users_lock
+2025/12/15 15:34:09 [INFO] [DB] Successfully disconnected client pho
+2025/12/15 15:34:09 [INFO] [Network] Connection closed by peer
+2025/12/15 15:34:09 [INFO] [DB] Connection closed by ('172.31.158.104', 47576)
+2025/12/15 15:34:11 [INFO] [Game] Player pho (P1_280251) disconnected
+2025/12/15 15:34:11 [INFO] [Lobby] Server is closed.
+2025/12/15 15:34:11 [INFO] [Game] Player mido (P2_280251) disconnected
+2025/12/15 15:34:13 [INFO] [DB] Database server is closed.

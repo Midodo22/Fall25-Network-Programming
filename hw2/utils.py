@@ -8,14 +8,16 @@ import random
 import config
 from config import tetris_server as tetris_server
 
+_snapshot_logger = logging.getLogger("snapshot")
+
 """
 General utils
 """
 async def send_message(writer, msg):
     try:
+        log_payload = msg
         if isinstance(msg, dict):
             msg = json.dumps(msg)
-        
         message = msg.encode('utf-8')
         length = len(message)
         
@@ -30,7 +32,20 @@ async def send_message(writer, msg):
         writer.write(header + message)
         
         await writer.drain()
-        logging.info(f"Sent message: {msg}")
+        
+        parsed_payload = None
+        if isinstance(log_payload, dict):
+            parsed_payload = log_payload
+        else:
+            try:
+                parsed_payload = json.loads(log_payload)
+            except Exception:
+                parsed_payload = None
+        
+        if isinstance(parsed_payload, dict) and parsed_payload.get("type") == "SNAPSHOT":
+            _snapshot_logger.info(msg)
+        else:
+            logging.info(f"Sent message: {msg}")
     except Exception as e:
         logging.error(f"Failed to send message: {e}")
 
@@ -73,8 +88,7 @@ async def unpack_message(reader):
 
         # Ignore oversized body and report error
         if length > config.MAX_MSG_SIZE:
-            logging.warning(f"Received oversized message ({length} bytes)")
-            await reader.readexactly(length)
+            logging.warning(f"Received oversized message ({length} bytes) — closing connection")
             return None
 
         body = await reader.readexactly(length)
@@ -91,59 +105,18 @@ async def unpack_message(reader):
 
 
 """
-User registration
+General utilities
 """
 def hash(p):
     pswd = hashlib.sha256(p.encode()).hexdigest()
     return str(pswd)
 
-
-async def send_lobby_info(writer):
-    try:
-        async with tetris_server.online_users_lock:
-            users_data = [
-                {"username": user, "status": info["status"]}
-                for user, info in tetris_server.online_users.items()
-            ]
-
-        async with tetris_server.rooms_lock:
-            public_rooms_data = [
-                {
-                    "room_id": r_id,
-                    "creator": room["creator"],
-                    "status": room["status"]
-                }
-                for r_id, room in tetris_server.rooms.items()
-            ]
-
-        status_message = "------ List of Rooms ------\n"
-        if not public_rooms_data:
-            status_message += "There are no rooms available :(\n"
-        else:
-            for room in public_rooms_data:
-                status_message += f"Room ID: {room['room_id']} | Creator: {room['creator']} | Status: {room['status']}\n"
-
-        status_message += "----------------------------\n\n"
-        status_message += "--- List of Online Users ---\n"
-        if not users_data:
-            status_message += "No users are online :(\n"
-        else:
-            for user in users_data:
-                status_message += f"User: {user['username']} - Status: {user['status']}\n"
-        status_message += "----------------------------\nInput command: "
-
-        status_response = {
-            "status": "status",
-            "message": status_message
-        }
-        await send_message(writer, json.dumps(status_response) + '\n')
-        logging.info("Sending SHOW_STATUS message to user")
-    except Exception as e:
-        logging.error(f"Failed to send lobby info: {e}")
-
-
 def get_port():
     return random.randint(config.P2P_PORT_RANGE[0], config.P2P_PORT_RANGE[1])
+
+
+def get_game_port():
+    return random.randint(config.GAME_PORT_RANGE[0], config.GAME_PORT_RANGE[1])
 
 
 def get_room_id():
@@ -158,3 +131,10 @@ def init_logging():
     logging.basicConfig(level=logging.INFO, filename=config.LOG_FILE, filemode="a",
                         format='%(asctime)s [%(levelname)s] %(message)s',
                         datefmt='%Y/%m/%d %H:%M:%S')
+    snapshot_logger = logging.getLogger("snapshot")
+    if not snapshot_logger.handlers:
+        handler = logging.FileHandler(config.SNAPSHOT_LOG_FILE, mode="a")
+        handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+        snapshot_logger.addHandler(handler)
+    snapshot_logger.setLevel(logging.INFO)
+    snapshot_logger.propagate = False
