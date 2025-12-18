@@ -3,6 +3,7 @@ Please first git clone this repository to your local machine.
 ```
 git clone https://github.com/Midodo22/Fall25-Network-Programming.git
 ```
+and run `make`
 ## Game Dev
 There are a few ways to initialize the game dev files.
 Default game dev accounts are:
