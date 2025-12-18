@@ -26,7 +26,6 @@ COMMAND_ALIASES = {
     "EXIT": ["EXIT", "exit", "quit", "q"],
     "HELP": ["HELP", "help", "h"],
     "SHOW_STATUS": ["SHOW_STATUS", "status", "s"],
-    "SCAN": ["SCAN", "scan"]
 }
 
 COMMANDS = [
@@ -38,7 +37,6 @@ COMMANDS = [
     "exit - Leave client",
     "help - Displays list of available commands",
     "status - Displays current status",
-    "scan - Scans UDP ports for available players"
 ]
 
 """
@@ -86,6 +84,8 @@ async def handle_server_messages(reader, writer, game_in_progress, logged_in):
                         parts = msg.split()
                         room_id = parts[1]
                         print(f"\nSuccessfully joined room {room_id}.\n")
+                    elif msg.startswith("INVITE_SENT"):
+                        print(f"\nSuccessfully sent invite.\n")
 
                 elif status == "error":
                     print(f"\nError: {msg}\n")

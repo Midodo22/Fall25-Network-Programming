@@ -1,0 +1,18 @@
+2025-12-10 23:07:06,514 - DEBUG - Using proactor: IocpProactor
+2025-12-10 23:07:14,135 - INFO - 成功連接到伺服器 127.0.0.1:47298
+2025-12-10 23:07:46,079 - INFO - 發送指令: REGISTER mido 1234
+2025-12-10 23:08:48,394 - DEBUG - Using proactor: IocpProactor
+2025-12-10 23:08:49,928 - INFO - 成功連接到伺服器 127.0.0.1:47298
+2025-12-10 23:08:53,827 - DEBUG - Using proactor: IocpProactor
+2025-12-10 23:08:55,791 - INFO - 成功連接到伺服器 127.0.0.1:47298
+2025-12-10 23:09:02,640 - INFO - 發送指令: LOGIN mido 1234
+2025-12-10 23:09:02,707 - INFO - 已創建資料夾：games-4772c833
+2025-12-10 23:09:02,711 - INFO - 已創建 peer_info.json 文件：games-4772c833\peer_info.json
+2025-12-10 23:09:07,595 - INFO - 發送指令: REGISTER toshi 1234
+2025-12-10 23:09:11,429 - INFO - 發送指令: LOGIN toshi 1234
+2025-12-10 23:09:11,492 - INFO - 已創建資料夾：games-9bc3eab7
+2025-12-10 23:09:11,496 - INFO - 已創建 peer_info.json 文件：games-9bc3eab7\peer_info.json
+2025-12-10 23:09:27,452 - DEBUG - 遊戲檔案路徑：games-4772c833\rps.py
+2025-12-10 23:09:27,453 - INFO - 發送指令: DOWNLOAD_GAME_FILE rps
+2025-12-10 23:09:38,739 - INFO - 發送指令: LIST_OWN_GAMES 
+2025-12-10 23:34:57,135 - ERROR - 發送指令時發生錯誤：

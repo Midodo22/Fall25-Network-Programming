@@ -1,6 +1,7 @@
 PYTHON ?= python3
+PIP ?= $(PYTHON) -m pip
 
-main:
+main: install-deps
 	make clean
 	mkdir -p games-dev1
 	cp games/rps.py games-dev1/rps.py
@@ -16,6 +17,9 @@ main:
 		kill $$DB_PID 2>/dev/null || true; \
 		wait $$DB_PID 2>/dev/null || true \
 	'
+
+install-deps:
+	$(PIP) install -r requirements.txt
 
 clean:
 	rm -f *.log

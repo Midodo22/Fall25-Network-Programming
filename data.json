@@ -1,0 +1,38 @@
+{
+    "users": {
+        "admin": {
+            "id": 0,
+            "password": "1234",
+            "invites": []
+        },
+        "mido": {
+            "password": "785f3ec7eb32f30b90cd0fcf3657d388b5ff4297f2f9716ff66e9b69c05ddd09",
+            "invites": []
+        },
+        "pho": {
+            "password": "4fc82b26aecb47d2868c4efbe3581732a3e7cbcc6c2efb32062c08170a05eeb8"
+        },
+        "cc": {
+            "password": "c6f3ac57944a531490cd39902d0f777715fd005efac9a30622d5f5205e7f6894"
+        },
+        "aa": {
+            "password": "4fc82b26aecb47d2868c4efbe3581732a3e7cbcc6c2efb32062c08170a05eeb8"
+        },
+        "bb": {
+            "password": "785f3ec7eb32f30b90cd0fcf3657d388b5ff4297f2f9716ff66e9b69c05ddd09"
+        }
+    },
+    "rooms": {
+        "template": {
+            "creator": "username",
+            "players": "username",
+            "type": "room_type",
+            "status": "waiting",
+            "game_results": {
+                "score": 0,
+                "winner": "None"
+            }
+        }
+    },
+    "online_users": {}
+}

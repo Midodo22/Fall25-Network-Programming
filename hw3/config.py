@@ -2,10 +2,10 @@ import asyncio
 import json
 import copy
 
-# HOST = '140.113.17.13'
+HOST = '140.113.17.13'
 # HOST = '192.168.56.1'
 # WSL
-HOST = '172.31.158.104'
+# HOST = '172.31.158.104'
 # HOST = '127.0.0.1'
 
 PORT = 52273
