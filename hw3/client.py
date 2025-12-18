@@ -1163,10 +1163,11 @@ async def initiate_game(game_name, game_in_progress, writer, user_folder):
             logging.error(f"peer_info 缺少字段：{', '.join(missing_fields)}")
             return
 
-        game_globals = {}   
+        game_globals = {}
         game_globals['peer_info'] = peer_info
         try:
-            async with aiofiles.open(file_path, 'r') as f:
+            # Force UTF-8 decoding to avoid Windows cp950 locale issues when games contain non-ASCII.
+            async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 code = await f.read()
             exec(code, game_globals)
             if 'main' in game_globals and callable(game_globals['main']):
